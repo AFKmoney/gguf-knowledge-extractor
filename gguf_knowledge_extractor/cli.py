@@ -43,6 +43,7 @@ from gguf_knowledge_extractor.core.causal_tracer import CausalTracer
 from gguf_knowledge_extractor.core.rome_editor import RomeEditor, EditRequest
 from gguf_knowledge_extractor.core.fingerprint_compare import FingerprintComparator
 from gguf_knowledge_extractor.core.model_manager import ModelManager, format_bytes
+from gguf_knowledge_extractor.core.gguf_surgeon import GGUFSurgeon, surgery_session
 
 
 def cmd_extract(args):
@@ -530,6 +531,126 @@ def cmd_models(args):
     mgr.close()
 
 
+def cmd_surgery(args):
+    """v5: Direct GGUF surgery — modify tensors, metadata, vocab, datasets without retraining."""
+    print(f"[surgery] Source: {args.gguf}")
+    print(f"[surgery] Output: {args.out}")
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load operations from JSON file or build from individual flags
+    operations = []
+    if args.operations_file:
+        with open(args.operations_file) as f:
+            ops_data = json.load(f)
+        if isinstance(ops_data, list):
+            operations = ops_data
+        elif isinstance(ops_data, dict) and "operations" in ops_data:
+            operations = ops_data["operations"]
+        else:
+            print("[surgery] ERROR: operations file must be a list or {\"operations\": [...]}")
+            sys.exit(1)
+    else:
+        # Build operations from individual flags
+        if args.system_prompt:
+            operations.append({"op": "bake_system_prompt", "prompt": args.system_prompt})
+        if args.chat_template is not None:
+            if args.chat_template == "":
+                operations.append({"op": "set_chat_template", "template": ""})
+            else:
+                # Read from file
+                with open(args.chat_template) as f:
+                    operations.append({"op": "set_chat_template", "template": f.read()})
+        if args.inject_dataset:
+            # Format: name:path:description
+            parts = args.inject_dataset.split(":", 2)
+            if len(parts) < 2:
+                print("[surgery] ERROR: --inject-dataset format is name:path[:description]")
+                sys.exit(1)
+            ds_name = parts[0]
+            ds_path = parts[1]
+            ds_desc = parts[2] if len(parts) > 2 else ""
+            with open(ds_path) as f:
+                ds_data = json.load(f)
+            operations.append({"op": "inject_dataset", "name": ds_name, "data": ds_data, "description": ds_desc})
+        if args.add_token:
+            # Format: token[:embedding_file]
+            parts = args.add_token.split(":", 1)
+            token = parts[0]
+            embedding = None
+            if len(parts) > 1:
+                import numpy as np
+                embedding = np.load(parts[1]).tolist()
+            operations.append({"op": "add_token", "token": token, "embedding": embedding})
+        if args.add_steering:
+            # Format: layer:name:vector_file[:strength]
+            parts = args.add_steering.split(":")
+            if len(parts) < 3:
+                print("[surgery] ERROR: --add-steering format is layer:name:vector_file[:strength]")
+                sys.exit(1)
+            import numpy as np
+            layer = int(parts[0])
+            name = parts[1]
+            vector = np.load(parts[2]).tolist()
+            strength = float(parts[3]) if len(parts) > 3 else 1.0
+            operations.append({"op": "add_steering_vector", "layer": layer, "name": name, "vector": vector, "strength": strength})
+        if args.set_meta:
+            # Format: key:type:value (type: string|int|float|bool)
+            parts = args.set_meta.split(":", 2)
+            if len(parts) < 3:
+                print("[surgery] ERROR: --set-meta format is key:type:value")
+                sys.exit(1)
+            key, vtype, value = parts
+            if vtype == "int":
+                value = int(value)
+            elif vtype == "float":
+                value = float(value)
+            elif vtype == "bool":
+                value = value.lower() in ("true", "1", "yes")
+            operations.append({"op": "set_metadata", "key": key, "value": value})
+        if args.remove_meta:
+            operations.append({"op": "remove_metadata", "key": args.remove_meta})
+
+    if not operations:
+        print("[surgery] No operations specified. Use --operations-file or individual flags.")
+        print("[surgery] Available operations:")
+        print("  --system-prompt <text>           Bake a system prompt")
+        print("  --chat-template <file>           Set chat template from file")
+        print("  --inject-dataset name:path[:desc] Inject a JSON dataset")
+        print("  --add-token token[:embed.npy]    Add a new token")
+        print("  --add-steering layer:name:vec.npy[:strength]")
+        print("                                   Add a steering vector")
+        print("  --set-meta key:type:value        Set a metadata field")
+        print("  --remove-meta key                Remove a metadata field")
+        print("  --operations-file <file>         JSON file with operation list")
+        sys.exit(1)
+
+    print(f"[surgery] {len(operations)} operation(s) queued:")
+    for i, op in enumerate(operations):
+        print(f"  [{i+1}] {op.get('op', '?')}: {', '.join(f'{k}={v}' for k, v in op.items() if k != 'op' and k != 'data' and k != 'vector' and k != 'embedding' and k != 'prompt' and k != 'template')}")
+
+    base_name = Path(args.gguf).stem
+    output_path = out_dir / f"{base_name}_surgery.gguf"
+
+    report = surgery_session(args.gguf, str(output_path), operations)
+    print(f"\n[surgery] Done in {report.elapsed_seconds:.2f}s")
+    print(f"[surgery] Success: {report.success}")
+    if report.error:
+        print(f"[surgery] Error: {report.error[:500]}")
+    else:
+        print(f"[surgery] Output: {report.output_path}")
+        print(f"[surgery] Tensors: {report.n_tensors}")
+        print(f"[surgery] KV pairs: {report.n_kv_pairs}")
+        print(f"[surgery] Operations applied: {len(report.operations)}")
+
+    # Save surgery report
+    report_path = out_dir / f"{base_name}_surgery_report.json"
+    with open(report_path, "w") as f:
+        json.dump(_to_jsonable_trace(report), f, indent=2, default=str)
+    print(f"[surgery] Report: {report_path}")
+
+
 def main():
     p = argparse.ArgumentParser(prog="gguf-knowledge-extractor", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -630,6 +751,20 @@ def main():
     md_del.add_argument("filename", help="Filename to delete")
 
     pmd.set_defaults(func=cmd_models)
+
+    # v5: surgery (direct GGUF modification)
+    psu = sub.add_parser("surgery", help="v5: Direct GGUF surgery — modify tensors, metadata, vocab, datasets without retraining")
+    psu.add_argument("--gguf", required=True, help="Source GGUF file")
+    psu.add_argument("--out", default="./download", help="Output directory")
+    psu.add_argument("--operations-file", help="JSON file with list of operations")
+    psu.add_argument("--system-prompt", help="Bake a system prompt into the model")
+    psu.add_argument("--chat-template", help="Set chat template from file (use '' for empty)")
+    psu.add_argument("--inject-dataset", help="Inject dataset: name:path[:description]")
+    psu.add_argument("--add-token", help="Add token: token[:embedding.npy]")
+    psu.add_argument("--add-steering", help="Add steering vector: layer:name:vector.npy[:strength]")
+    psu.add_argument("--set-meta", help="Set metadata: key:type:value (type: string|int|float|bool)")
+    psu.add_argument("--remove-meta", help="Remove metadata: key")
+    psu.set_defaults(func=cmd_surgery)
 
     args = p.parse_args()
     args.func(args)

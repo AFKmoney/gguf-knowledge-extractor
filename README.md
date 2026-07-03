@@ -24,6 +24,15 @@ A hybrid extraction tool that cracks open a GGUF file in two complementary ways:
 12. **One-click download** — download any GGUF file directly from HF Hub with resumable streaming, progress bar, and ETA.
 13. **Local model registry** — downloaded models are tracked with provenance (repo_id, download timestamp). Use them directly in Extract / Trace / Edit via a dropdown — no manual file upload.
 
+**v5 adds direct GGUF surgery — modify models without retraining:**
+14. **Bake system prompt** — inject a default system prompt into the model metadata.
+15. **Set chat template** — rewrite the tokenizer's chat template (Jinja format).
+16. **Inject datasets** — embed JSON datasets directly in the GGUF as metadata (RAG-style). The data becomes part of the model file and can be accessed by prompting.
+17. **Extend vocabulary** — add new tokens with computed or zero-vector embeddings.
+18. **Add steering vectors** — inject activation steering bias vectors as custom tensors for behavior modification.
+19. **Patch tensors** — overwrite arbitrary slices of any F32/F16 tensor.
+20. **Set/remove metadata** — add, modify, or delete any KV metadata field.
+
 ## What gets extracted
 
 | Knowledge type | How | Output |
@@ -98,6 +107,18 @@ python gguf_knowledge_extractor/cli.py models download hugging-quants/Llama-3.2-
 python gguf_knowledge_extractor/cli.py models list
 python gguf_knowledge_extractor/cli.py models delete llama-3.2-1b-instruct-q8_0.gguf
 
+# v5: Direct GGUF surgery — modify without retraining
+python gguf_knowledge_extractor/cli.py surgery --gguf model.gguf --out ./out/ \
+    --system-prompt "You are a custom assistant." \
+    --set-meta "general.license:string:Modified-MIT" \
+    --inject-dataset "company_faq:./faq.json:Company FAQ data" \
+    --add-token "[CUSTOM_TOKEN]" \
+    --add-steering "5:helpful:./steering.npy:0.5"
+
+# v5: Surgery from operations JSON file
+python gguf_knowledge_extractor/cli.py surgery --gguf model.gguf --out ./out/ \
+    --operations-file surgery_ops.json
+
 # Full extraction (metadata + weights + all probes + v2 attribution)
 python gguf_knowledge_extractor/cli.py extract \
     --gguf ./models/llama-7b.Q4_K_M.gguf \
@@ -152,6 +173,21 @@ python gguf_knowledge_extractor/cli.py inspect \
     "prompt": "Mount Everest is located in",
     "target_object": "Antarctica"
   }
+]
+```
+
+### surgery_ops.json format (for `surgery --operations-file`)
+
+```json
+[
+  {"op": "bake_system_prompt", "prompt": "You are a custom assistant."},
+  {"op": "set_chat_template", "template": "{%- for m in messages %}{{ m.role }}: {{ m.content }}\\n{%- endfor %}"},
+  {"op": "inject_dataset", "name": "company_faq", "description": "FAQ data", "data": [{"q": "Who?", "a": "ACME"}]},
+  {"op": "add_token", "token": "[CUSTOM]"},
+  {"op": "add_steering_vector", "layer": 5, "name": "helpful", "strength": 0.5, "vector": [0.1, 0.2, 0.3]},
+  {"op": "set_metadata", "key": "general.license", "value": "Modified-MIT"},
+  {"op": "remove_metadata", "key": "general.unwanted_field"},
+  {"op": "patch_tensor", "name": "blk.0.attn_q.weight", "slice": [0, 4, 0, 4], "new_values": [[1,1,1,1],[1,1,1,1],[1,1,1,1],[1,1,1,1]]}
 ]
 ```
 
@@ -241,7 +277,7 @@ probes:
 ```
 gguf_knowledge_extractor/
 ├── __init__.py
-├── cli.py                              # CLI entry point (9 subcommands incl. `models`)
+├── cli.py                              # CLI entry point (10 subcommands)
 ├── core/
 │   ├── gguf_parser.py                  # Reads metadata via gguf-py
 │   ├── weight_inspector.py             # Tensor statistics & embedding analysis
@@ -253,6 +289,7 @@ gguf_knowledge_extractor/
 │   ├── rome_editor.py                  # v3: ROME rank-1 fact editing + GGUF patching
 │   ├── fingerprint_compare.py          # v3: cross-model lineage comparison
 │   ├── model_manager.py                # v4: Hugging Face Hub browser & downloader
+│   ├── gguf_surgeon.py                 # v5: direct GGUF surgery (7 operations)
 │   ├── extractor.py                    # Top-level orchestrator
 │   ├── inference/
 │   │   └── base.py                     # ServerBackend / PythonBackend / AutoBackend
@@ -264,9 +301,9 @@ gguf_knowledge_extractor/
 │       ├── graph_exporter.py           # GraphML + RDF/Turtle (with attribution nodes)
 │       └── sqlite_exporter.py          # 9 + 5 v2 tables = 14 tables total
 └── web/
-    ├── server.py                       # FastAPI app (v1 + v2 + v3 + v4 endpoints)
+    ├── server.py                       # FastAPI app (v1-v5 endpoints)
     └── static/
-        ├── index.html                  # 8 views: extract, trace, edit, compare, models, jobs, packs, backends
+        ├── index.html                  # 9 views: extract, trace, edit, compare, models, surgery, jobs, packs, backends
         ├── style.css
         └── app.js
 
@@ -275,7 +312,7 @@ scripts/
     ├── make_test_gguf.py               # Generates a tiny test GGUF (full Llama arch)
     └── start_web_ui.py
 tests/
-    └── smoke_test.py                   # End-to-end test of all 9 CLI subcommands
+    └── smoke_test.py                   # End-to-end test of all 10 CLI subcommands
 ```
 
 ## v2 SQLite schema (attribution tables)
@@ -331,6 +368,10 @@ This generates a tiny 3-layer Llama-arch GGUF (450KB), runs all 8 CLI subcommand
 - **v3 ROME editing** uses the simplified "direct rank-1 overwrite" rather than the full covariance-based ROME update. Works well for single-fact edits but may have more collateral damage than the original paper's method. Only supports F32 and F16 tensors — quantized tensors (Q4_K_M, etc.) cannot be patched in place and would require requantization.
 - **v3 ROME editing verification** is in-memory only — after writing the modified GGUF, we verify the edit by re-running the forward pass on the in-memory modified weights. To verify the written file, you'd need to load it in llama.cpp or re-run `trace` on the edited GGUF.
 - **v3 cross-model comparison** is most meaningful for same-architecture models. Comparing a 7B Llama to a 13B Mistral will produce a low lineage score even if they share training data, because the (layer, neuron) pairs don't align.
+- **v5 tensor patching** only works on F32 and F16 tensors. Quantized tensors (Q4_K_M, Q5_K, etc.) cannot be patched in place — they would need requantization. The surgery will skip quantized tensors with a warning.
+- **v5 dataset injection** embeds data as JSON metadata. The model doesn't automatically "know" about this data — you need to prompt it to access the injected dataset (or use a custom inference engine that reads the metadata). The dataset is stored under `general.injected_dataset.<name>` as a JSON string.
+- **v5 steering vectors** are stored as custom tensors (`blk.{layer}.steering.{name}.weight`). Standard inference engines (llama.cpp) will ignore them. A custom inference engine that reads and applies these vectors after each layer is needed to activate them.
+- **v5 vocabulary extension** adds new tokens with zero (or provided) embeddings. Zero-embedding tokens will be inert until their embeddings are filled via ROME editing or other weight surgery. The token_embd matrix is extended in-place.
 
 ## License
 

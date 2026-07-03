@@ -36,6 +36,7 @@ from ..core.causal_tracer import CausalTracer
 from ..core.rome_editor import RomeEditor, EditRequest
 from ..core.fingerprint_compare import FingerprintComparator
 from ..core.model_manager import ModelManager, format_bytes
+from ..core.gguf_surgeon import GGUFSurgeon, surgery_session
 
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -487,7 +488,120 @@ def create_app() -> FastAPI:
         except Exception as e:
             raise HTTPException(500, f"Delete failed: {e}")
 
+    # ------------------------------------------------------------------ #
+    # v5 API: GGUF Surgery (direct modification without retraining)
+    # ------------------------------------------------------------------ #
+    @app.post("/api/surgery")
+    async def api_surgery(
+        background_tasks: BackgroundTasks,
+        file: UploadFile = File(...),
+        operations_json: str = Form(...),
+    ):
+        """v5: Run GGUF surgery operations on a model."""
+        if not file.filename or not file.filename.lower().endswith(".gguf"):
+            raise HTTPException(400, "File must be a .gguf file")
+
+        try:
+            operations = json.loads(operations_json)
+        except Exception as e:
+            raise HTTPException(400, f"Invalid operations JSON: {e}")
+
+        job_id = str(uuid.uuid4())[:8]
+        job_dir = JOBS_DIR / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+
+        gguf_path = job_dir / file.filename
+        with open(gguf_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+
+        JOBS[job_id] = {
+            "id": job_id,
+            "status": "queued",
+            "gguf_path": str(gguf_path),
+            "gguf_filename": file.filename,
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "progress": {"message": "queued", "current": 0, "total": 0},
+            "result_paths": {},
+            "error": None,
+            "options": {"operations": operations},
+            "kind": "surgery",
+        }
+
+        background_tasks.add_task(_run_surgery, job_id, str(gguf_path), operations)
+        return {"job_id": job_id, "status": "queued"}
+
+    @app.post("/api/surgery-local")
+    async def api_surgery_local(
+        background_tasks: BackgroundTasks,
+        local_path: str = Form(...),
+        operations_json: str = Form(...),
+    ):
+        """v5: Run surgery on a local model file."""
+        gguf_path = Path(local_path)
+        if not gguf_path.exists() or not gguf_path.name.lower().endswith(".gguf"):
+            raise HTTPException(400, f"Invalid local path: {local_path}")
+
+        try:
+            operations = json.loads(operations_json)
+        except Exception as e:
+            raise HTTPException(400, f"Invalid operations JSON: {e}")
+
+        job_id = str(uuid.uuid4())[:8]
+        JOBS[job_id] = {
+            "id": job_id,
+            "status": "queued",
+            "gguf_path": str(gguf_path),
+            "gguf_filename": gguf_path.name,
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "progress": {"message": "queued", "current": 0, "total": 0},
+            "result_paths": {},
+            "error": None,
+            "options": {"operations": operations, "local_path": str(gguf_path)},
+            "kind": "surgery",
+        }
+
+        background_tasks.add_task(_run_surgery, job_id, str(gguf_path), operations)
+        return {"job_id": job_id, "status": "queued"}
+
     return app
+
+
+# ---------------------------------------------------------------------- #
+# v5 surgery worker
+# ---------------------------------------------------------------------- #
+def _run_surgery(job_id: str, gguf_path: str, operations):
+    """Background worker for GGUF surgery."""
+    job = JOBS[job_id]
+    job["status"] = "running"
+    try:
+        job["progress"] = {"message": f"Running {len(operations)} surgery operations", "current": 0, "total": len(operations)}
+        
+        job_dir = Path(gguf_path).parent
+        base_name = Path(gguf_path).stem
+        output_path = job_dir / f"{base_name}_surgery.gguf"
+        
+        report = surgery_session(gguf_path, str(output_path), operations)
+        
+        import dataclasses
+        report_dict = _to_jsonable(dataclasses.asdict(report))
+        
+        job["result_paths"] = {
+            "surgery_gguf": report.output_path,
+            "json": str(job_dir / f"{base_name}_surgery_report.json"),
+        }
+        # Save report
+        import json as _json
+        with open(job["result_paths"]["json"], "w") as f:
+            _json.dump(report_dict, f, indent=2, default=str)
+        
+        job["report_preview"] = report_dict
+        job["status"] = "completed"
+        job["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception as e:
+        import traceback
+        job["status"] = "failed"
+        job["error"] = str(e)
+        job["traceback"] = traceback.format_exc()
 
 
 # ---------------------------------------------------------------------- #

@@ -75,6 +75,10 @@ def main() -> int:
          "v4 HF Hub search (network required)"),
         ([*cli, "models", "list"],
          "v4 list local models"),
+        ([*cli, "surgery", "--gguf", str(gguf_path), "--out", str(work),
+          "--system-prompt", "Test surgery prompt",
+          "--set-meta", "general.custom:string:tested"],
+         "v5 GGUF surgery (system prompt + metadata)"),
     ]
 
     failures = 0

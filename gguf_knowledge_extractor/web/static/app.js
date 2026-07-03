@@ -22,6 +22,7 @@ $('#nav-trace').onclick = (e) => { e.preventDefault(); showView('trace'); };
 $('#nav-edit').onclick = (e) => { e.preventDefault(); showView('edit'); initEditView(); };
 $('#nav-compare').onclick = (e) => { e.preventDefault(); showView('compare'); };
 $('#nav-models').onclick = (e) => { e.preventDefault(); showView('models'); loadLocalModels(); loadDownloads(); };
+$('#nav-surgery').onclick = (e) => { e.preventDefault(); showView('surgery'); refreshSurgeryLocalModels(); };
 $('#nav-jobs').onclick = (e) => { e.preventDefault(); showView('jobs'); loadJobs(); };
 $('#nav-packs').onclick = (e) => { e.preventDefault(); showView('packs'); loadPacksDetail(); };
 $('#nav-backends').onclick = (e) => { e.preventDefault(); showView('backends'); loadBackendsDetail(); };
@@ -1051,3 +1052,205 @@ function startDownloadPolling() {
     } catch (e) { /* ignore */ }
   }, 1500);
 }
+
+// ---------------------------------------------------------------- //
+// v5: GGUF Surgery
+// ---------------------------------------------------------------- //
+let surgeryFile = null;
+let surgeryLocalPath = null;
+let surgeryOps = [];
+
+const surgeryDz = $('#surgery-dropzone');
+const surgeryInput = $('#surgery-file-input');
+surgeryDz.onclick = () => surgeryInput.click();
+surgeryDz.ondragover = (e) => { e.preventDefault(); surgeryDz.classList.add('drag-over'); };
+surgeryDz.ondragleave = () => surgeryDz.classList.remove('drag-over');
+surgeryDz.ondrop = (e) => {
+  e.preventDefault();
+  surgeryDz.classList.remove('drag-over');
+  if (e.dataTransfer.files.length) handleSurgeryFile(e.dataTransfer.files[0]);
+};
+surgeryInput.onchange = (e) => { if (e.target.files.length) handleSurgeryFile(e.target.files[0]); };
+
+function handleSurgeryFile(file) {
+  if (!file.name.toLowerCase().endsWith('.gguf')) { alert('File must be .gguf'); return; }
+  surgeryFile = file;
+  surgeryLocalPath = null;
+  $('#surgery-local-select').value = '';
+  $('#surgery-selected-file').textContent = `✓ ${file.name} (${formatBytes(file.size)})`;
+  updateSurgeryButton();
+}
+
+async function refreshSurgeryLocalModels() {
+  try {
+    const res = await fetch('/api/models/local');
+    const data = await res.json();
+    const select = $('#surgery-local-select');
+    select.innerHTML = '<option value="">— Select a local model —</option>';
+    for (const m of data.models) {
+      const opt = document.createElement('option');
+      opt.value = m.path;
+      opt.textContent = `${m.filename} (${m.size_human})`;
+      select.appendChild(opt);
+    }
+  } catch (e) { /* ignore */ }
+}
+
+$('#surgery-local-select').onchange = (e) => {
+  if (e.target.value) {
+    surgeryLocalPath = e.target.value;
+    surgeryFile = null;
+    const filename = e.target.value.split('/').pop();
+    $('#surgery-selected-file').textContent = `✓ Selected: ${filename}`;
+    updateSurgeryButton();
+  } else {
+    surgeryLocalPath = null;
+    $('#surgery-selected-file').textContent = '';
+    updateSurgeryButton();
+  }
+};
+
+const OP_TYPES = [
+  {value: 'bake_system_prompt', label: 'Bake System Prompt'},
+  {value: 'set_chat_template', label: 'Set Chat Template'},
+  {value: 'inject_dataset', label: 'Inject Dataset (RAG-style)'},
+  {value: 'add_token', label: 'Add New Token'},
+  {value: 'add_steering_vector', label: 'Add Steering Vector'},
+  {value: 'set_metadata', label: 'Set Metadata Field'},
+  {value: 'remove_metadata', label: 'Remove Metadata Field'},
+];
+
+$('#btn-surgery-add-op').onclick = () => {
+  surgeryOps.push({type: 'bake_system_prompt', fields: {}});
+  renderSurgeryOps();
+};
+
+function renderSurgeryOps() {
+  const container = $('#surgery-ops-list');
+  container.innerHTML = '';
+  surgeryOps.forEach((op, idx) => {
+    const div = document.createElement('div');
+    div.style.cssText = 'background:var(--bg-elev);border-radius:8px;padding:14px;margin-bottom:10px;';
+    
+    // Operation type selector
+    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <select data-op-idx="${idx}" class="surgery-op-type" style="background:var(--bg-card);border:1px solid var(--border);border-radius:4px;padding:4px 8px;color:var(--text);font-size:12px;">`;
+    for (const t of OP_TYPES) {
+      html += `<option value="${t.value}" ${op.type === t.value ? 'selected' : ''}>${t.label}</option>`;
+    }
+    html += `</select>
+      <button class="btn-secondary" style="padding:4px 10px;font-size:11px;color:var(--danger);" data-rm-op="${idx}">Remove</button>
+    </div>`;
+    
+    // Template fields
+    const template = $(`#surgery-op-templates [data-template="${op.type}"]`);
+    if (template) {
+      html += `<div class="surgery-op-fields" data-op-idx="${idx}">${template.innerHTML}</div>`;
+    }
+    
+    div.innerHTML = html;
+    container.appendChild(div);
+  });
+  
+  // Wire up type selectors
+  container.querySelectorAll('.surgery-op-type').forEach(sel => {
+    sel.onchange = (e) => {
+      const idx = parseInt(e.target.dataset.opIdx);
+      surgeryOps[idx].type = e.target.value;
+      surgeryOps[idx].fields = {};
+      renderSurgeryOps();
+    };
+  });
+  
+  // Wire up remove buttons
+  container.querySelectorAll('button[data-rm-op]').forEach(btn => {
+    btn.onclick = (e) => {
+      const idx = parseInt(e.target.dataset.rmOp);
+      surgeryOps.splice(idx, 1);
+      renderSurgeryOps();
+      updateSurgeryButton();
+    };
+  });
+  
+  // Wire up field inputs
+  container.querySelectorAll('.surgery-op-fields').forEach(fieldContainer => {
+    const idx = parseInt(fieldContainer.dataset.opIdx);
+    fieldContainer.querySelectorAll('[data-field]').forEach(inp => {
+      const fieldName = inp.dataset.field;
+      if (surgeryOps[idx].fields[fieldName] !== undefined) {
+        inp.value = surgeryOps[idx].fields[fieldName];
+      }
+      inp.oninput = (e) => {
+        surgeryOps[idx].fields[fieldName] = e.target.value;
+        updateSurgeryButton();
+      };
+    });
+  });
+}
+
+function updateSurgeryButton() {
+  const hasModel = surgeryFile || surgeryLocalPath;
+  const hasOps = surgeryOps.length > 0;
+  $('#btn-surgery-run').disabled = !(hasModel && hasOps);
+}
+
+$('#btn-surgery-run').onclick = async () => {
+  // Build operations JSON from the form
+  const operations = surgeryOps.map(op => {
+    const result = {op: op.type};
+    const fields = op.fields;
+    if (op.type === 'bake_system_prompt') {
+      result.prompt = fields.prompt || '';
+    } else if (op.type === 'set_chat_template') {
+      result.template = fields.template || '';
+    } else if (op.type === 'inject_dataset') {
+      result.name = fields.name || 'dataset';
+      result.description = fields.description || '';
+      try { result.data = JSON.parse(fields.data || '[]'); }
+      catch (e) { result.data = []; }
+    } else if (op.type === 'add_token') {
+      result.token = fields.token || '';
+      if (fields.embedding && fields.embedding.trim()) {
+        result.embedding = fields.embedding.split(',').map(parseFloat);
+      }
+    } else if (op.type === 'add_steering_vector') {
+      result.layer = parseInt(fields.layer) || 0;
+      result.name = fields.name || 'default';
+      result.strength = parseFloat(fields.strength) || 1.0;
+      result.vector = fields.vector.split(',').map(parseFloat);
+    } else if (op.type === 'set_metadata') {
+      result.key = fields.key || '';
+      result.value = fields.value || '';
+      if (fields.value_type === 'int') result.value = parseInt(result.value);
+      else if (fields.value_type === 'float') result.value = parseFloat(result.value);
+      else if (fields.value_type === 'bool') result.value = result.value.toLowerCase() === 'true';
+    } else if (op.type === 'remove_metadata') {
+      result.key = fields.key || '';
+    }
+    return result;
+  });
+
+  const fd = new FormData();
+  if (surgeryFile) {
+    fd.append('file', surgeryFile);
+  } else if (surgeryLocalPath) {
+    fd.append('local_path', surgeryLocalPath);
+  }
+  fd.append('operations_json', JSON.stringify(operations));
+
+  $('#btn-surgery-run').disabled = true;
+  $('#btn-surgery-run').textContent = 'Running...';
+
+  try {
+    const url = surgeryLocalPath ? '/api/surgery-local' : '/api/surgery';
+    const res = await fetch(url, { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'surgery failed to start');
+    showView('job');
+    pollJob(data.job_id);
+  } catch (e) {
+    alert('Failed: ' + e.message);
+    $('#btn-surgery-run').disabled = false;
+    $('#btn-surgery-run').textContent = 'Run surgery →';
+  }
+};

@@ -21,6 +21,7 @@
       <a href="#" id="nav-edit">v3: Edit</a>
       <a href="#" id="nav-compare">v3: Compare</a>
       <a href="#" id="nav-models">Models</a>
+      <a href="#" id="nav-surgery">Surgery</a>
       <a href="#" id="nav-jobs">Jobs</a>
       <a href="#" id="nav-packs">Probe Packs</a>
       <a href="#" id="nav-backends">Backends</a>
@@ -228,6 +229,85 @@
           </label>
         </div>
         <div id="models-info-result" style="margin-top:14px;"></div>
+      </div>
+    </section>
+
+    <!-- v5: Surgery view (direct GGUF modification) -->
+    <section id="view-surgery" class="view">
+      <div class="card">
+        <h2>v5: GGUF Surgery — Direct Modification Without Retraining</h2>
+        <p class="hint">Surgically modify any GGUF model: bake system prompts, inject datasets, extend vocabulary, add steering vectors, rewrite chat templates, patch tensors. The source file is never modified — a new GGUF is written.</p>
+      </div>
+
+      <div class="card">
+        <h2>1. Select a model</h2>
+        <div class="dropzone" id="surgery-dropzone">
+          <input type="file" id="surgery-file-input" accept=".gguf" hidden />
+          <div class="dz-content">
+            <div class="dz-icon">🔬</div>
+            <p><strong>Drop a .gguf file</strong> or click to browse</p>
+          </div>
+        </div>
+        <p class="selected-file" id="surgery-selected-file"></p>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+          <p style="font-size:13px;margin-bottom:8px;"><strong>Or use a downloaded model:</strong></p>
+          <select id="surgery-local-select" style="width:100%;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-family:var(--mono);font-size:13px;">
+            <option value="">— Select a local model —</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>2. Operations</h2>
+        <p class="hint">Add operations to perform on the model. Each operation modifies the model in-memory before writing the output file.</p>
+
+        <div id="surgery-ops-list"></div>
+        <button id="btn-surgery-add-op" class="btn-secondary" style="margin-top:10px;">+ Add operation</button>
+
+        <div id="surgery-op-templates" style="display:none;">
+          <!-- Templates for each operation type, cloned by JS -->
+          <div data-template="bake_system_prompt">
+            <label>System Prompt<textarea data-field="prompt" rows="3" style="width:100%;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-family:var(--mono);font-size:12px;" placeholder="You are a helpful assistant."></textarea></label>
+          </div>
+          <div data-template="set_chat_template">
+            <label>Chat Template (Jinja)<textarea data-field="template" rows="3" style="width:100%;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-family:var(--mono);font-size:12px;" placeholder="{%- for message in messages %}{{ message.role }}: {{ message.content }}\n{%- endfor %}"></textarea></label>
+          </div>
+          <div data-template="inject_dataset">
+            <div class="form-row">
+              <label>Dataset Name<input type="text" data-field="name" placeholder="my_dataset" /></label>
+              <label>Description<input type="text" data-field="description" placeholder="Optional description" /></label>
+            </div>
+            <label>JSON Data<textarea data-field="data" rows="4" style="width:100%;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-family:var(--mono);font-size:12px;" placeholder='[{"q": "Question", "a": "Answer"}]'></textarea></label>
+          </div>
+          <div data-template="add_token">
+            <div class="form-row">
+              <label>Token Text<input type="text" data-field="token" placeholder="[CUSTOM]" /></label>
+              <label>Embedding (comma-separated floats, optional)<input type="text" data-field="embedding" placeholder="0.1,0.2,0.3,..." /></label>
+            </div>
+          </div>
+          <div data-template="add_steering_vector">
+            <div class="form-row">
+              <label>Layer<input type="number" data-field="layer" value="0" min="0" /></label>
+              <label>Name<input type="text" data-field="name" value="default" /></label>
+              <label>Strength<input type="number" data-field="strength" value="1.0" step="0.1" /></label>
+            </div>
+            <label>Vector (comma-separated floats)<input type="text" data-field="vector" style="width:100%;font-family:var(--mono);" placeholder="0.1,0.2,0.3,..." /></label>
+          </div>
+          <div data-template="set_metadata">
+            <div class="form-row">
+              <label>Key<input type="text" data-field="key" placeholder="general.custom_field" /></label>
+              <label>Type<select data-field="value_type"><option value="string">string</option><option value="int">int</option><option value="float">float</option><option value="bool">bool</option></select></label>
+              <label>Value<input type="text" data-field="value" placeholder="value" /></label>
+            </div>
+          </div>
+          <div data-template="remove_metadata">
+            <label>Key to remove<input type="text" data-field="key" placeholder="general.field_to_remove" /></label>
+          </div>
+        </div>
+      </div>
+
+      <div class="card actions">
+        <button id="btn-surgery-run" class="btn-primary" disabled>Run surgery →</button>
       </div>
     </section>
 
