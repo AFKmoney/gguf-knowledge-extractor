@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GGUF Knowledge Extractor</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="logo">⬢</div>
+      <div>
+        <h1>GGUF Knowledge Extractor</h1>
+        <p class="tagline">Stop treating the model as a black box. Crack it open.</p>
+      </div>
+    </div>
+    <nav>
+      <a href="#" id="nav-extract" class="active">Extract</a>
+      <a href="#" id="nav-jobs">Jobs</a>
+      <a href="#" id="nav-packs">Probe Packs</a>
+      <a href="#" id="nav-backends">Backends</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <!-- Extract view -->
+    <section id="view-extract" class="view active">
+      <div class="card">
+        <h2>1. Upload a GGUF file</h2>
+        <div class="dropzone" id="dropzone">
+          <input type="file" id="file-input" accept=".gguf" hidden />
+          <div class="dz-content">
+            <div class="dz-icon">📁</div>
+            <p><strong>Drop a .gguf file here</strong> or click to browse</p>
+            <p class="hint">The file is processed locally and never leaves this machine.</p>
+          </div>
+        </div>
+        <p class="selected-file" id="selected-file"></p>
+      </div>
+
+      <div class="card">
+        <h2>2. Choose what to extract</h2>
+        <div class="checkbox-grid">
+          <label><input type="checkbox" id="opt-metadata" checked /> Model metadata</label>
+          <label><input type="checkbox" id="opt-weights" checked /> Weight inspection (mechanistic)</label>
+          <label><input type="checkbox" id="opt-probes" checked /> Inference probes (facts/concepts/behavioral)</label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>3. Select probe packs</h2>
+        <div id="packs-list" class="packs-grid">
+          <p class="hint">Loading probe packs...</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>4. Inference backend</h2>
+        <div class="form-row">
+          <label>
+            Prefer
+            <select id="opt-prefer">
+              <option value="auto">Auto (try server, fall back to python)</option>
+              <option value="server">llama.cpp server (HTTP)</option>
+              <option value="python">llama-cpp-python (in-process)</option>
+            </select>
+          </label>
+          <label>
+            Server URL
+            <input type="text" id="opt-server-url" value="http://127.0.0.1:8080" />
+          </label>
+          <label>
+            n_ctx
+            <input type="number" id="opt-nctx" value="4096" min="512" max="32768" />
+          </label>
+          <label>
+            n_gpu_layers
+            <input type="number" id="opt-ngpu" value="0" min="0" max="200" />
+          </label>
+        </div>
+        <button id="btn-check-backends" class="btn-secondary">Check backend availability</button>
+        <div id="backends-status" class="backends-status"></div>
+      </div>
+
+      <div class="card actions">
+        <button id="btn-extract" class="btn-primary" disabled>Extract knowledge →</button>
+      </div>
+    </section>
+
+    <!-- Job progress / results -->
+    <section id="view-job" class="view">
+      <div id="job-content"></div>
+    </section>
+
+    <!-- Jobs list -->
+    <section id="view-jobs" class="view">
+      <div class="card">
+        <h2>Past extraction jobs</h2>
+        <div id="jobs-list"></div>
+      </div>
+    </section>
+
+    <!-- Packs -->
+    <section id="view-packs" class="view">
+      <div class="card">
+        <h2>Probe packs shipped with this tool</h2>
+        <div id="packs-detail"></div>
+      </div>
+    </section>
+
+    <!-- Backends -->
+    <section id="view-backends" class="view">
+      <div class="card">
+        <h2>Inference backend availability</h2>
+        <p class="hint">Probes need an inference backend. If neither is available, probes will be skipped (metadata & weights still work).</p>
+        <div id="backends-detail"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>GGUF Knowledge Extractor v1.0.0 — hybrid weight inspection + inference probing</p>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,88 @@
+name: concepts_programming
+description: Probe what programming languages and concepts the model knows
+category: concepts
+domain: programming
+probes:
+  - id: python_fizzbuzz
+    prompt: "Write a Python function called fizzbuzz(n) that prints FizzBuzz from 1 to n. Reply with only the code, no explanation."
+    expected: "def fizzbuzz"
+    match_mode: contains
+    max_tokens: 512
+    tags: [python, basic]
+
+  - id: python_list_comprehension
+    prompt: "Write a Python list comprehension that produces the squares of numbers 1 through 10. Reply with only the code."
+    expected: "for"
+    match_mode: contains
+    max_tokens: 64
+    tags: [python]
+
+  - id: js_arrow_function
+    prompt: "Write a JavaScript arrow function that takes two numbers and returns their sum. Reply with only the code."
+    expected: "=>"
+    match_mode: contains
+    max_tokens: 64
+    tags: [javascript]
+
+  - id: sql_select
+    prompt: "Write a SQL query that selects all columns from a table named users where age is greater than 18. Reply with only the SQL."
+    expected: "SELECT"
+    match_mode: contains
+    max_tokens: 64
+    tags: [sql]
+
+  - id: git_commit
+    prompt: "What is the git command to stage all changes? Reply with only the command."
+    expected: "git add"
+    match_mode: contains
+    max_tokens: 16
+    tags: [git, vcs]
+
+  - id: bash_list_files
+    prompt: "What is the bash command to list all files including hidden ones in long format? Reply with only the command."
+    expected: "ls -la"
+    match_mode: contains
+    max_tokens: 16
+    tags: [bash, shell]
+
+  - id: regex_email
+    prompt: "Write a simple regular expression that matches an email address. Reply with only the regex."
+    expected: "@"
+    match_mode: contains
+    max_tokens: 64
+    tags: [regex]
+
+  - id: recursion_concept
+    prompt: "In one sentence, what is recursion in programming?"
+    expected: "function that calls itself"
+    match_mode: contains
+    max_tokens: 64
+    tags: [concept]
+
+  - id: big_o_binary_search
+    prompt: "What is the time complexity of binary search in Big-O notation? Reply with only the expression."
+    expected: "O(log n)"
+    match_mode: contains
+    max_tokens: 16
+    tags: [algorithms, complexity]
+
+  - id: python_decorator
+    prompt: "Write a Python decorator named 'timer' that prints the time a function takes to run. Reply with only the code."
+    expected: "def timer"
+    match_mode: contains
+    max_tokens: 256
+    tags: [python, advanced]
+
+  - id: docker_run
+    prompt: "What is the docker command to run an nginx container exposing port 80 on the host? Reply with only the command."
+    expected: "docker run"
+    match_mode: contains
+    max_tokens: 64
+    tags: [docker, devops]
+
+  - id: python_dict
+    prompt: "Write a Python one-liner to create a dictionary with keys 'a','b','c' and values 1,2,3. Reply with only the code."
+    expected: "{"
+    match_mode: contains
+    max_tokens: 32
+    tags: [python]

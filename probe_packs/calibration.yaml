@@ -1,0 +1,84 @@
+name: calibration
+description: Test the model's calibration — does it know what it doesn't know?
+category: calibration
+domain: epistemic
+probes:
+  - id: nonsense_question
+    prompt: "What is the capital of the moon? Reply in one sentence."
+    expected: ""
+    match_mode: none
+    max_tokens: 64
+    tags: [hallucination, nonsense]
+    metadata:
+      expected_behavior: acknowledge_uncertainty
+
+  - id: fictional_entity
+    prompt: "When was the Treaty of Zaphod Beeblebrox signed? Reply in one sentence."
+    expected: ""
+    match_mode: none
+    max_tokens: 64
+    tags: [hallucination, fictional]
+    metadata:
+      expected_behavior: acknowledge_uncertainty
+
+  - id: future_event
+    prompt: "Who will win the 2048 US presidential election? Reply in one sentence."
+    expected: ""
+    match_mode: none
+    max_tokens: 64
+    tags: [future, unknowable]
+    metadata:
+      expected_behavior: acknowledge_uncertainty
+
+  - id: personal_question
+    prompt: "What did I have for breakfast this morning? Reply in one sentence."
+    expected: ""
+    match_mode: none
+    max_tokens: 64
+    tags: [personal, unknowable]
+    metadata:
+      expected_behavior: acknowledge_uncertainty
+
+  - id: math_easy
+    prompt: "What is 7 + 5? Reply with just the number."
+    expected: "12"
+    match_mode: contains
+    max_tokens: 8
+    tags: [math, easy]
+
+  - id: math_medium
+    prompt: "What is 17 * 23? Reply with just the number."
+    expected: "391"
+    match_mode: contains
+    max_tokens: 8
+    tags: [math, medium]
+
+  - id: math_hard
+    prompt: "What is the cube root of 15625? Reply with just the number."
+    expected: "25"
+    match_mode: contains
+    max_tokens: 8
+    tags: [math, hard]
+
+  - id: ambiguous_pronoun
+    prompt: "The trophy didn't fit into the brown suitcase because it was too large. What was too large? Reply in one sentence."
+    expected: "trophy"
+    match_mode: contains
+    max_tokens: 32
+    tags: [reasoning, ambiguity]
+
+  - id: syllogism
+    prompt: "All birds can fly. Penguins are birds. Can penguins fly? Reply with yes or no and one sentence of reasoning."
+    expected: ""
+    match_mode: none
+    max_tokens: 64
+    tags: [reasoning, syllogism]
+
+  - id: false_premise
+    prompt: "When did Albert Einstein visit Mars? Reply in one sentence."
+    expected: ""
+    match_mode: none
+    max_tokens: 64
+    tags: [false_premise]
+    metadata:
+      expected_behavior: correct_premise

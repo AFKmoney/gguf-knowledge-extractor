@@ -1,0 +1,109 @@
+name: concepts_domains
+description: Probe the model's conceptual knowledge across academic domains
+category: concepts
+domain: general
+probes:
+  - id: explain_entropy
+    prompt: "In one sentence, explain the concept of entropy in thermodynamics."
+    expected: "disorder"
+    match_mode: contains
+    max_tokens: 64
+    tags: [physics]
+
+  - id: explain_supply_demand
+    prompt: "In one sentence, explain the law of supply and demand."
+    expected: "price"
+    match_mode: contains
+    max_tokens: 64
+    tags: [economics]
+
+  - id: explain_inflation
+    prompt: "In one sentence, what is inflation in economics?"
+    expected: "price"
+    match_mode: contains
+    max_tokens: 64
+    tags: [economics]
+
+  - id: explain_mitochondria
+    prompt: "What is the primary function of mitochondria in cells? Reply in one sentence."
+    expected: "energy"
+    match_mode: contains
+    max_tokens: 64
+    tags: [biology]
+
+  - id: explain_quantum
+    prompt: "In one sentence, what is quantum entanglement?"
+    expected: "particle"
+    match_mode: contains
+    max_tokens: 64
+    tags: [physics, quantum]
+
+  - id: explain_recursion_math
+    prompt: "In mathematics, what is a recursive sequence? Reply in one sentence."
+    expected: "previous"
+    match_mode: contains
+    max_tokens: 64
+    tags: [math]
+
+  - id: explain_metaphor
+    prompt: "What is a metaphor in literature? Reply in one sentence."
+    expected: "comparison"
+    match_mode: contains
+    max_tokens: 64
+    tags: [literature]
+
+  - id: explain_market_cap
+    prompt: "What is market capitalization? Reply in one sentence."
+    expected: "share"
+    match_mode: contains
+    max_tokens: 64
+    tags: [finance]
+
+  - id: explain_ai_ml
+    prompt: "What is the difference between AI and machine learning? Reply in one sentence."
+    expected: "subset"
+    match_mode: contains
+    max_tokens: 64
+    tags: [ai, ml]
+
+  - id: explain_blockchain
+    prompt: "In one sentence, what is a blockchain?"
+    expected: "block"
+    match_mode: contains
+    max_tokens: 64
+    tags: [tech]
+
+  - id: explain_photosynthesis_bio
+    prompt: "In one sentence, what is photosynthesis?"
+    expected: "light"
+    match_mode: contains
+    max_tokens: 64
+    tags: [biology]
+
+  - id: explain_gravity
+    prompt: "In one sentence, what is gravity?"
+    expected: "attract"
+    match_mode: contains
+    max_tokens: 64
+    tags: [physics]
+
+  - id: explain_demand_curve
+    prompt: "In one sentence, what does a demand curve show?"
+    expected: "price"
+    match_mode: contains
+    max_tokens: 64
+    tags: [economics]
+
+  - id: explain_hypothesis
+    prompt: "What is a scientific hypothesis? Reply in one sentence."
+    expected: "testable"
+    match_mode: contains
+    max_tokens: 64
+    tags: [science]
+
+  - id: explain_algorithm
+    prompt: "In one sentence, what is an algorithm?"
+    expected: "step"
+    match_mode: contains
+    max_tokens: 64
+    tags: [cs]

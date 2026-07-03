@@ -1,0 +1,11 @@
+gguf>=0.10
+numpy>=1.24
+fastapi>=0.100
+uvicorn>=0.20
+pydantic>=2.0
+pyyaml>=6.0
+jinja2>=3.0
+networkx>=3.0
+httpx>=0.24
+# Optional — for in-process inference (skipped if not installed)
+# llama-cpp-python>=0.2.0

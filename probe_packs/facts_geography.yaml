@@ -1,0 +1,109 @@
+name: facts_geography
+description: World geography facts — capitals, rivers, mountains, borders
+category: facts
+domain: geography
+probes:
+  - id: capital_france
+    prompt: "What is the capital of France? Reply with just the city name."
+    expected: "Paris"
+    match_mode: contains
+    max_tokens: 16
+    tags: [europe, capital]
+
+  - id: capital_japan
+    prompt: "What is the capital of Japan? Reply with just the city name."
+    expected: "Tokyo"
+    match_mode: contains
+    max_tokens: 16
+    tags: [asia, capital]
+
+  - id: capital_brazil
+    prompt: "What is the capital of Brazil? Reply with just the city name."
+    expected: "Brasilia"
+    match_mode: contains
+    max_tokens: 16
+    tags: [south_america, capital]
+
+  - id: capital_canada
+    prompt: "What is the capital of Canada? Reply with just the city name."
+    expected: "Ottawa"
+    match_mode: contains
+    max_tokens: 16
+    tags: [north_america, capital]
+
+  - id: capital_australia
+    prompt: "What is the capital of Australia? Reply with just the city name."
+    expected: "Canberra"
+    match_mode: contains
+    max_tokens: 16
+    tags: [oceania, capital]
+
+  - id: capital_egypt
+    prompt: "What is the capital of Egypt? Reply with just the city name."
+    expected: "Cairo"
+    match_mode: contains
+    max_tokens: 16
+    tags: [africa, capital]
+
+  - id: capital_russia
+    prompt: "What is the capital of Russia? Reply with just the city name."
+    expected: "Moscow"
+    match_mode: contains
+    max_tokens: 16
+    tags: [europe, capital]
+
+  - id: capital_india
+    prompt: "What is the capital of India? Reply with just the city name."
+    expected: "New Delhi"
+    match_mode: contains
+    max_tokens: 16
+    tags: [asia, capital]
+
+  - id: longest_river
+    prompt: "What is the longest river in the world? Reply with just the river name."
+    expected: "Nile"
+    match_mode: contains
+    max_tokens: 16
+    tags: [river]
+
+  - id: highest_mountain
+    prompt: "What is the highest mountain in the world? Reply with just the name."
+    expected: "Everest"
+    match_mode: contains
+    max_tokens: 16
+    tags: [mountain]
+
+  - id: largest_ocean
+    prompt: "What is the largest ocean on Earth? Reply with just the ocean name."
+    expected: "Pacific"
+    match_mode: contains
+    max_tokens: 16
+    tags: [ocean]
+
+  - id: largest_desert
+    prompt: "What is the largest hot desert in the world? Reply with just the name."
+    expected: "Sahara"
+    match_mode: contains
+    max_tokens: 16
+    tags: [desert]
+
+  - id: continent_sahara
+    prompt: "On which continent is the Sahara desert? Reply with just the continent name."
+    expected: "Africa"
+    match_mode: contains
+    max_tokens: 16
+    tags: [continent, desert]
+
+  - id: country_pyramids
+    prompt: "In which country are the Great Pyramids of Giza located? Reply with just the country name."
+    expected: "Egypt"
+    match_mode: contains
+    max_tokens: 16
+    tags: [landmark]
+
+  - id: amazon_location
+    prompt: "On which continent is the Amazon rainforest primarily located? Reply with just the continent name."
+    expected: "South America"
+    match_mode: contains
+    max_tokens: 16
+    tags: [continent, rainforest]

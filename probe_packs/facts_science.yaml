@@ -1,0 +1,88 @@
+name: facts_science
+description: Basic science facts — physics, chemistry, biology, astronomy
+category: facts
+domain: science
+probes:
+  - id: water_formula
+    prompt: "What is the chemical formula for water? Reply with just the formula."
+    expected: "H2O"
+    match_mode: contains
+    max_tokens: 16
+    tags: [chemistry]
+
+  - id: speed_of_light
+    prompt: "What is the approximate speed of light in vacuum in km/s? Reply with just the number."
+    expected: "299,792"
+    match_mode: contains
+    max_tokens: 32
+    tags: [physics]
+
+  - id: earth_orbits_sun
+    prompt: "Does the Earth orbit the Sun, or does the Sun orbit the Earth? Reply in one short sentence."
+    expected: "Earth orbits the Sun"
+    match_mode: contains
+    max_tokens: 32
+    tags: [astronomy]
+
+  - id: photosynthesis
+    prompt: "What gas do plants absorb during photosynthesis? Reply with just the gas name."
+    expected: "carbon dioxide"
+    match_mode: contains
+    max_tokens: 16
+    tags: [biology]
+
+  - id: dna_full_name
+    prompt: "What does DNA stand for? Reply with the full name only."
+    expected: "Deoxyribonucleic acid"
+    match_mode: contains
+    max_tokens: 32
+    tags: [biology]
+
+  - id: periodic_table_h
+    prompt: "What is the first element on the periodic table? Reply with just the element name."
+    expected: "Hydrogen"
+    match_mode: contains
+    max_tokens: 16
+    tags: [chemistry]
+
+  - id: gravity_discoverer
+    prompt: "Who is credited with formulating the law of universal gravitation? Reply with just the name."
+    expected: "Newton"
+    match_mode: contains
+    max_tokens: 16
+    tags: [physics, history]
+
+  - id: sun_energy_source
+    prompt: "What nuclear process powers the Sun? Reply with the name of the process."
+    expected: "fusion"
+    match_mode: contains
+    max_tokens: 16
+    tags: [astronomy, physics]
+
+  - id: human_chromosomes
+    prompt: "How many chromosomes does a normal human cell have? Reply with just the number."
+    expected: "46"
+    match_mode: contains
+    max_tokens: 8
+    tags: [biology]
+
+  - id: planck_constant_symbol
+    prompt: "What letter is typically used to represent Planck's constant? Reply with just the letter."
+    expected: "h"
+    match_mode: contains
+    max_tokens: 4
+    tags: [physics]
+
+  - id: planets_count
+    prompt: "How many planets are in our solar system? Reply with just the number."
+    expected: "8"
+    match_mode: contains
+    max_tokens: 8
+    tags: [astronomy]
+
+  - id: largest_planet
+    prompt: "What is the largest planet in our solar system? Reply with just the name."
+    expected: "Jupiter"
+    match_mode: contains
+    max_tokens: 16
+    tags: [astronomy]

@@ -1,0 +1,88 @@
+name: facts_history
+description: World history facts — dates, people, events
+category: facts
+domain: history
+probes:
+  - id: ww2_end_year
+    prompt: "In what year did World War II end? Reply with just the year."
+    expected: "1945"
+    match_mode: contains
+    max_tokens: 8
+    tags: [modern, war]
+
+  - id: ww1_start_year
+    prompt: "In what year did World War I begin? Reply with just the year."
+    expected: "1914"
+    match_mode: contains
+    max_tokens: 8
+    tags: [modern, war]
+
+  - id: berlin_wall_fall
+    prompt: "In what year did the Berlin Wall fall? Reply with just the year."
+    expected: "1989"
+    match_mode: contains
+    max_tokens: 8
+    tags: [cold_war]
+
+  - id: french_revolution_start
+    prompt: "In what year did the French Revolution begin? Reply with just the year."
+    expected: "1789"
+    match_mode: contains
+    max_tokens: 8
+    tags: [europe, revolution]
+
+  - id: us_independence_year
+    prompt: "In what year did the United States declare independence? Reply with just the year."
+    expected: "1776"
+    match_mode: contains
+    max_tokens: 8
+    tags: [us, independence]
+
+  - id: columbus_year
+    prompt: "In what year did Christopher Columbus first reach the Americas? Reply with just the year."
+    expected: "1492"
+    match_mode: contains
+    max_tokens: 8
+    tags: [exploration]
+
+  - id: rome_fall_year
+    prompt: "In what year did the Western Roman Empire fall? Reply with just the year."
+    expected: "476"
+    match_mode: contains
+    max_tokens: 8
+    tags: [ancient, rome]
+
+  - id: magna_carta_year
+    prompt: "In what year was the Magna Carta signed? Reply with just the year."
+    expected: "1215"
+    match_mode: contains
+    max_tokens: 8
+    tags: [medieval, england]
+
+  - id: einstein_birth
+    prompt: "Was Albert Einstein born in the 19th or 20th century? Reply with just the century."
+    expected: "19th"
+    match_mode: contains
+    max_tokens: 8
+    tags: [science, biography]
+
+  - id: printing_press_inventor
+    prompt: "Who is credited with inventing the printing press in Europe? Reply with just the name."
+    expected: "Gutenberg"
+    match_mode: contains
+    max_tokens: 16
+    tags: [invention, medieval]
+
+  - id: egypt_pyramids_built
+    prompt: "Were the Great Pyramids of Giza built before or after the year 0 BCE? Reply with one word."
+    expected: "before"
+    match_mode: contains
+    max_tokens: 8
+    tags: [ancient]
+
+  - id: soviet_union_fall
+    prompt: "In what year did the Soviet Union dissolve? Reply with just the year."
+    expected: "1991"
+    match_mode: contains
+    max_tokens: 8
+    tags: [cold_war]
