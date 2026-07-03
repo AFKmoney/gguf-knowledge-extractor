@@ -71,6 +71,10 @@ def main() -> int:
           str(work / "test_tiny_report.json"),
           "--out", str(work / "comparison.json")],
          "v3 cross-model comparison"),
+        ([*cli, "models", "search", "llama", "--limit", "3"],
+         "v4 HF Hub search (network required)"),
+        ([*cli, "models", "list"],
+         "v4 list local models"),
     ]
 
     failures = 0

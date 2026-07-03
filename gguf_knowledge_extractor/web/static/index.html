@@ -20,6 +20,7 @@
       <a href="#" id="nav-trace">v3: Trace</a>
       <a href="#" id="nav-edit">v3: Edit</a>
       <a href="#" id="nav-compare">v3: Compare</a>
+      <a href="#" id="nav-models">Models</a>
       <a href="#" id="nav-jobs">Jobs</a>
       <a href="#" id="nav-packs">Probe Packs</a>
       <a href="#" id="nav-backends">Backends</a>
@@ -40,6 +41,16 @@
           </div>
         </div>
         <p class="selected-file" id="selected-file"></p>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+          <p style="font-size:13px;margin-bottom:8px;"><strong>Or pick a downloaded model:</strong></p>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <select id="local-model-select" style="flex:1;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-family:var(--mono);font-size:13px;">
+              <option value="">— Select a downloaded model —</option>
+            </select>
+            <button id="btn-refresh-local-models" class="btn-secondary" style="padding:8px 12px;">Refresh</button>
+          </div>
+          <p class="hint" style="margin-top:6px;">Download models from the <a href="#" id="link-to-models" style="color:var(--accent-2);">Models tab</a>.</p>
+        </div>
       </div>
 
       <div class="card">
@@ -169,6 +180,54 @@
         </div>
         <div id="compare-files-list" style="margin-top:10px;"></div>
         <button id="btn-compare" class="btn-primary" disabled style="margin-top:14px;">Compare models →</button>
+      </div>
+    </section>
+
+    <!-- v4: Models view (Hugging Face Hub browser) -->
+    <section id="view-models" class="view">
+      <div class="card">
+        <h2>Hugging Face Hub — Browse & Download GGUF Models</h2>
+        <p class="hint">Search the HF Hub for GGUF models, download them directly to your local models directory, then use them in Extract / Trace / Edit. Just like LM Studio.</p>
+      </div>
+
+      <div class="card">
+        <h2>Search</h2>
+        <div class="form-row">
+          <label style="grid-column: 1 / -1;">
+            Query
+            <div style="display:flex;gap:8px;">
+              <input type="text" id="models-search-query" placeholder="e.g. llama 3 8b instruct" style="flex:1;" />
+              <button id="btn-models-search" class="btn-primary">Search</button>
+            </div>
+          </label>
+        </div>
+        <div id="models-search-results" style="margin-top:14px;"></div>
+      </div>
+
+      <div class="card">
+        <h2>Active &amp; Recent Downloads</h2>
+        <div id="models-downloads-list"></div>
+      </div>
+
+      <div class="card">
+        <h2>Local Models</h2>
+        <p class="hint" id="models-local-dir"></p>
+        <div id="models-local-list" style="margin-top:14px;"></div>
+      </div>
+
+      <div class="card">
+        <h2>Model Details</h2>
+        <p class="hint">Enter a repo ID to see its files and download a specific GGUF.</p>
+        <div class="form-row">
+          <label style="grid-column: 1 / -1;">
+            Repo ID
+            <div style="display:flex;gap:8px;">
+              <input type="text" id="models-info-repo" placeholder="e.g. hugging-quants/Llama-3.2-1B-Instruct-Q8_0-GGUF" style="flex:1;" />
+              <button id="btn-models-info" class="btn-secondary">Get info</button>
+            </div>
+          </label>
+        </div>
+        <div id="models-info-result" style="margin-top:14px;"></div>
       </div>
     </section>
 

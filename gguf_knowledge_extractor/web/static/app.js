@@ -21,6 +21,7 @@ $('#nav-extract').onclick = (e) => { e.preventDefault(); showView('extract'); };
 $('#nav-trace').onclick = (e) => { e.preventDefault(); showView('trace'); };
 $('#nav-edit').onclick = (e) => { e.preventDefault(); showView('edit'); initEditView(); };
 $('#nav-compare').onclick = (e) => { e.preventDefault(); showView('compare'); };
+$('#nav-models').onclick = (e) => { e.preventDefault(); showView('models'); loadLocalModels(); loadDownloads(); };
 $('#nav-jobs').onclick = (e) => { e.preventDefault(); showView('jobs'); loadJobs(); };
 $('#nav-packs').onclick = (e) => { e.preventDefault(); showView('packs'); loadPacksDetail(); };
 $('#nav-backends').onclick = (e) => { e.preventDefault(); showView('backends'); loadBackendsDetail(); };
@@ -47,6 +48,8 @@ function handleFile(file) {
     return;
   }
   selectedFile = file;
+  selectedFilePath = null;  // clear local path selection
+  $('#local-model-select').value = '';  // reset dropdown
   $('#selected-file').textContent = `✓ ${file.name} (${(file.size / 1e9).toFixed(2)} GB)`;
   $('#btn-extract').disabled = false;
 }
@@ -157,13 +160,68 @@ async function loadBackendsDetail() {
 $('#btn-check-backends').onclick = checkBackends;
 
 // ---------------------------------------------------------------- //
+// Local model dropdown in Extract view
+// ---------------------------------------------------------------- //
+async function refreshLocalModelDropdown() {
+  try {
+    const res = await fetch('/api/models/local');
+    const data = await res.json();
+    const select = $('#local-model-select');
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = '<option value="">— Select a downloaded model —</option>';
+    for (const m of data.models) {
+      const opt = document.createElement('option');
+      opt.value = m.path;
+      opt.textContent = `${m.filename} (${m.size_human})`;
+      select.appendChild(opt);
+    }
+    if (current) select.value = current;
+  } catch (e) { /* ignore — dropdown is optional */ }
+}
+
+$('#btn-refresh-local-models')?.addEventListener('click', refreshLocalModelDropdown);
+$('#link-to-models')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  showView('models');
+  loadLocalModels();
+  loadDownloads();
+});
+
+// When a local model is selected, fetch it as a File object
+$('#local-model-select')?.addEventListener('change', async (e) => {
+  const path = e.target.value;
+  if (!path) return;
+  // The server path is the absolute filesystem path. We need to fetch the file
+  // from a new endpoint. For now, we'll use a fetch endpoint that streams the file.
+  // Actually, simpler: extract requires a File upload. We can't easily set a File
+  // from a path in the browser. Instead, we'll add a separate endpoint that
+  // accepts a local path and runs extraction directly.
+  // For now, we just show the selected path.
+  const filename = path.split('/').pop();
+  $('#selected-file').textContent = `✓ Selected local model: ${filename}`;
+  selectedFile = null;  // clear any previously-dropped file
+  selectedFilePath = path;  // store path for submission
+  $('#btn-extract').disabled = false;
+});
+let selectedFilePath = null;
+
+// Initial load of dropdown
+refreshLocalModelDropdown();
+
+// ---------------------------------------------------------------- //
 // Extract
 // ---------------------------------------------------------------- //
 $('#btn-extract').onclick = async () => {
-  if (!selectedFile) return;
+  if (!selectedFile && !selectedFilePath) return;
 
   const fd = new FormData();
-  fd.append('file', selectedFile);
+  if (selectedFile) {
+    fd.append('file', selectedFile);
+  } else if (selectedFilePath) {
+    // Use the local path endpoint
+    fd.append('local_path', selectedFilePath);
+  }
   fd.append('packs', selectedPacks.size === 0 ? 'all' : Array.from(selectedPacks).join(','));
   fd.append('do_metadata', $('#opt-metadata').checked);
   fd.append('do_weights', $('#opt-weights').checked);
@@ -179,7 +237,8 @@ $('#btn-extract').onclick = async () => {
   $('#btn-extract').textContent = 'Starting...';
 
   try {
-    const res = await fetch('/api/extract', { method: 'POST', body: fd });
+    const url = selectedFilePath ? '/api/extract-local' : '/api/extract';
+    const res = await fetch(url, { method: 'POST', body: fd });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'extraction failed to start');
     showView('job');
@@ -731,4 +790,264 @@ function renderCompareResult(report) {
 
   html += `</div>`;
   c.innerHTML = html;
+}
+
+// ---------------------------------------------------------------- //
+// v4: Hugging Face Hub model browser
+// ---------------------------------------------------------------- //
+let downloadPollTimer = null;
+
+function formatBytes(n) {
+  if (!n) return '?';
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + ' GB';
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + ' MB';
+  if (n >= 1e3) return (n / 1e3).toFixed(2) + ' KB';
+  return n + ' B';
+}
+
+function formatNumber(n) {
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return String(n);
+}
+
+$('#btn-models-search').onclick = async () => {
+  const q = $('#models-search-query').value.trim();
+  if (!q) { alert('Enter a search query'); return; }
+  $('#btn-models-search').textContent = 'Searching...';
+  $('#btn-models-search').disabled = true;
+  try {
+    const res = await fetch(`/api/models/search?q=${encodeURIComponent(q)}&limit=30`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'search failed');
+    renderSearchResults(data.results);
+  } catch (e) {
+    alert('Search failed: ' + e.message);
+  } finally {
+    $('#btn-models-search').textContent = 'Search';
+    $('#btn-models-search').disabled = false;
+  }
+};
+
+// Search on Enter key
+$('#models-search-query').addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') $('#btn-models-search').click();
+});
+
+function renderSearchResults(results) {
+  const container = $('#models-search-results');
+  if (!results.length) {
+    container.innerHTML = '<p class="hint">No models found.</p>';
+    return;
+  }
+  container.innerHTML = `<p class="hint">${results.length} models found. Click a row to see files.</p>`;
+  container.innerHTML += `<table><thead><tr>
+    <th>Repo</th><th>Downloads</th><th>Likes</th><th>Tag</th><th>Last Modified</th>
+  </tr></thead><tbody>`;
+  for (const m of results) {
+    const tags = (m.tags || []).slice(0, 3).join(', ');
+    container.innerHTML += `<tr style="cursor:pointer;" data-repo="${m.repo_id}" class="search-row">
+      <td><strong>${m.repo_id}</strong>${m.gated ? ' <span style="color:var(--warn);font-size:10px;">[GATED]</span>' : ''}</td>
+      <td>${formatNumber(m.downloads)}</td>
+      <td>${m.likes}</td>
+      <td style="font-size:11px;color:var(--text-dim);">${tags}</td>
+      <td style="font-size:11px;">${(m.last_modified || '').slice(0,10)}</td>
+    </tr>`;
+  }
+  container.innerHTML += '</tbody></table>';
+  // Click to load info
+  container.querySelectorAll('.search-row').forEach(row => {
+    row.onclick = () => {
+      $('#models-info-repo').value = row.dataset.repo;
+      $('#btn-models-info').click();
+    };
+  });
+}
+
+$('#btn-models-info').onclick = async () => {
+  const repo = $('#models-info-repo').value.trim();
+  if (!repo) { alert('Enter a repo ID'); return; }
+  $('#btn-models-info').textContent = 'Loading...';
+  $('#btn-models-info').disabled = true;
+  try {
+    const res = await fetch(`/api/models/info/${repo}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'info failed');
+    renderModelInfo(data);
+  } catch (e) {
+    alert('Info failed: ' + e.message);
+    $('#models-info-result').innerHTML = '';
+  } finally {
+    $('#btn-models-info').textContent = 'Get info';
+    $('#btn-models-info').disabled = false;
+  }
+};
+
+function renderModelInfo(info) {
+  const container = $('#models-info-result');
+  let html = `<div style="background:var(--bg-elev);border-radius:8px;padding:14px;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
+      <div>
+        <strong style="font-size:14px;">${info.repo_id}</strong>
+        ${info.gated ? '<span class="badge" style="background:var(--warn);color:black;margin-left:6px;">GATED</span>' : ''}
+        <p class="hint" style="margin-top:4px;">by <strong>${info.author}</strong> · ${formatNumber(info.downloads)} downloads · ${info.likes} likes</p>
+      </div>
+      <div style="text-align:right;font-size:11px;color:var(--text-dim);">
+        <div>${info.pipeline_tag || 'n/a'}</div>
+        <div>Last modified: ${(info.last_modified || '').slice(0,10)}</div>
+      </div>
+    </div>`;
+  if (info.tags && info.tags.length) {
+    html += `<div style="margin-bottom:10px;">${info.tags.map(t => `<span style="display:inline-block;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;margin:2px;">${t}</span>`).join('')}</div>`;
+  }
+  html += `<p style="margin:14px 0 6px;font-size:13px;font-weight:600;color:var(--accent);">Files</p>`;
+  html += `<table><thead><tr><th>Filename</th><th>Size</th><th></th></tr></thead><tbody>`;
+  for (const f of info.files) {
+    if (f.is_gguf) {
+      html += `<tr>
+        <td><strong>[GGUF]</strong> ${f.filename}</td>
+        <td>${f.size_human}</td>
+        <td><button class="btn-primary" style="padding:4px 10px;font-size:11px;" data-dl-repo="${info.repo_id}" data-dl-file="${f.filename}">Download</button></td>
+      </tr>`;
+    } else {
+      html += `<tr style="opacity:0.6;">
+        <td>${f.filename}</td>
+        <td>${f.size_human}</td>
+        <td></td>
+      </tr>`;
+    }
+  }
+  html += `</tbody></table></div>`;
+  container.innerHTML = html;
+  // Wire download buttons
+  container.querySelectorAll('button[data-dl-repo]').forEach(btn => {
+    btn.onclick = async () => {
+      const repo = btn.dataset.dlRepo;
+      const file = btn.dataset.dlFile;
+      btn.disabled = true;
+      btn.textContent = 'Starting...';
+      try {
+        const fd = new FormData();
+        fd.append('repo_id', repo);
+        fd.append('filename', file);
+        const res = await fetch('/api/models/download', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'download start failed');
+        btn.textContent = 'Downloading...';
+        startDownloadPolling();
+      } catch (e) {
+        alert('Download failed: ' + e.message);
+        btn.disabled = false;
+        btn.textContent = 'Download';
+      }
+    };
+  });
+}
+
+async function loadLocalModels() {
+  try {
+    const res = await fetch('/api/models/local');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'list failed');
+    $('#models-local-dir').textContent = `Directory: ${data.models_dir}`;
+    const container = $('#models-local-list');
+    if (!data.models.length) {
+      container.innerHTML = '<p class="hint">No local models yet. Use the search above to find and download GGUF models.</p>';
+      return;
+    }
+    let html = `<table><thead><tr><th>Filename</th><th>Size</th><th>Source</th><th>Downloaded</th><th></th></tr></thead><tbody>`;
+    for (const m of data.models) {
+      html += `<tr>
+        <td><strong>${m.filename}</strong></td>
+        <td>${m.size_human}</td>
+        <td style="font-size:11px;">${m.repo_id || 'unknown'}</td>
+        <td style="font-size:11px;">${(m.downloaded_at || '').slice(0,16)}</td>
+        <td><button class="btn-secondary" style="padding:4px 10px;font-size:11px;color:var(--danger);" data-del="${m.filename}">Delete</button></td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    container.innerHTML = html;
+    container.querySelectorAll('button[data-del]').forEach(btn => {
+      btn.onclick = async () => {
+        if (!confirm(`Delete ${btn.dataset.del}?`)) return;
+        try {
+          const res = await fetch(`/api/models/local/${encodeURIComponent(btn.dataset.del)}`, { method: 'DELETE' });
+          if (!res.ok) throw new Error('delete failed');
+          loadLocalModels();
+        } catch (e) { alert('Delete failed: ' + e.message); }
+      };
+    });
+  } catch (e) {
+    $('#models-local-list').innerHTML = `<p style="color:var(--danger);">${e.message}</p>`;
+  }
+}
+
+async function loadDownloads() {
+  try {
+    const res = await fetch('/api/models/downloads');
+    const downloads = await res.json();
+    renderDownloads(downloads);
+    // If any are still downloading, keep polling
+    if (downloads.some(d => d.status === 'downloading' || d.status === 'queued')) {
+      startDownloadPolling();
+    }
+  } catch (e) {
+    console.error('load downloads failed', e);
+  }
+}
+
+function renderDownloads(downloads) {
+  const container = $('#models-downloads-list');
+  if (!downloads.length) {
+    container.innerHTML = '<p class="hint">No downloads yet.</p>';
+    return;
+  }
+  // Show most recent first
+  const sorted = [...downloads].reverse();
+  let html = `<table><thead><tr><th>Status</th><th>File</th><th>Progress</th><th>Speed</th><th>ETA</th></tr></thead><tbody>`;
+  for (const d of sorted.slice(0, 10)) {
+    const pct = d.percent.toFixed(1);
+    const statusColor = d.status === 'completed' ? 'var(--success)' : d.status === 'failed' ? 'var(--danger)' : 'var(--accent)';
+    html += `<tr>
+      <td><span style="color:${statusColor};font-weight:600;">${d.status.toUpperCase()}</span></td>
+      <td style="font-family:var(--mono);font-size:11px;">${d.filename}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div style="flex:1;height:6px;background:var(--bg-elev);border-radius:3px;overflow:hidden;min-width:100px;">
+            <div style="height:100%;width:${pct}%;background:${statusColor};transition:width 0.3s;"></div>
+          </div>
+          <span style="font-size:11px;font-family:var(--mono);min-width:80px;">${formatBytes(d.bytes_downloaded)} / ${formatBytes(d.total_bytes)}</span>
+        </div>
+      </td>
+      <td style="font-size:11px;">${d.speed_mbps > 0 ? d.speed_mbps.toFixed(1) + ' MB/s' : '-'}</td>
+      <td style="font-size:11px;">${d.eta_seconds > 0 ? Math.round(d.eta_seconds) + 's' : '-'}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  if (downloads.some(d => d.status === 'completed')) {
+    html += '<p class="hint" style="margin-top:8px;">Completed downloads appear in the "Local Models" list below.</p>';
+  }
+  container.innerHTML = html;
+}
+
+function startDownloadPolling() {
+  if (downloadPollTimer) return;
+  downloadPollTimer = setInterval(async () => {
+    try {
+      const res = await fetch('/api/models/downloads');
+      const downloads = await res.json();
+      renderDownloads(downloads);
+      // Also refresh local models when a download completes
+      if (downloads.some(d => d.status === 'completed' && !d._seen)) {
+        downloads.forEach(d => { if (d.status === 'completed') d._seen = true; });
+        loadLocalModels();
+      }
+      // Stop polling when nothing is active
+      if (!downloads.some(d => d.status === 'downloading' || d.status === 'queued')) {
+        clearInterval(downloadPollTimer);
+        downloadPollTimer = null;
+        loadLocalModels();  // final refresh
+      }
+    } catch (e) { /* ignore */ }
+  }, 1500);
 }

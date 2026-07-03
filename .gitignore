@@ -28,6 +28,7 @@ Thumbs.db
 
 # Project artifacts
 download/
+models/
 *.gguf
 *.db
 *.sqlite

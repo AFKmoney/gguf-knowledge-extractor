@@ -22,7 +22,7 @@ from .gguf_parser import GGUFParser, GGUFMetadata
 from .weight_inspector import WeightInspector
 from .inference.base import InferenceBackend, AutoBackend
 from .probes.base import (
-    ProbePack, evaluate_probe, load_probe_packs, list_default_packs
+    ProbePack, evaluate_probe, list_default_packs
 )
 from .knowledge_attribution import KnowledgeAttributor
 

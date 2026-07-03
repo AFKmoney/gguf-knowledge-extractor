@@ -42,6 +42,7 @@ from gguf_knowledge_extractor.core.exporters.sqlite_exporter import export_sqlit
 from gguf_knowledge_extractor.core.causal_tracer import CausalTracer
 from gguf_knowledge_extractor.core.rome_editor import RomeEditor, EditRequest
 from gguf_knowledge_extractor.core.fingerprint_compare import FingerprintComparator
+from gguf_knowledge_extractor.core.model_manager import ModelManager, format_bytes
 
 
 def cmd_extract(args):
@@ -428,6 +429,107 @@ def _to_jsonable_trace(obj):
     return obj
 
 
+# ---------------------------------------------------------------------- #
+# models subcommands (Hugging Face Hub integration)
+# ---------------------------------------------------------------------- #
+def cmd_models(args):
+    """v4: Hugging Face Hub model browser & downloader."""
+    mgr = ModelManager(models_dir=args.models_dir, hf_token=args.hf_token)
+
+    if args.models_cmd == "search":
+        print(f"[models] Searching HF Hub for '{args.query}' (limit {args.limit})...")
+        results = mgr.search(args.query, limit=args.limit, sort=args.sort, gguf_only=not args.all_models)
+        if not results:
+            print("[models] No models found.")
+            return
+        print(f"[models] Found {len(results)} models:")
+        print()
+        print(f"{'Repo ID':<55} {'Downloads':>10} {'Likes':>6} {'GGUF files':>11}")
+        print("-" * 90)
+        for m in results:
+            print(f"{m.repo_id:<55} {m.downloads:>10,} {m.likes:>6} {len(m.gguf_files):>11}")
+        print()
+        print("Use `python cli.py models info <repo_id>` for details.")
+
+    elif args.models_cmd == "info":
+        print(f"[models] Getting info for {args.repo_id}...")
+        try:
+            info = mgr.get_model_info(args.repo_id)
+        except Exception as e:
+            print(f"[models] ERROR: {e}")
+            sys.exit(1)
+        print()
+        print(f"  Repo:          {info.repo_id}")
+        print(f"  Author:        {info.author}")
+        print(f"  Downloads:     {info.downloads:,}")
+        print(f"  Likes:         {info.likes}")
+        print(f"  Pipeline tag:  {info.pipeline_tag or 'n/a'}")
+        print(f"  Gated:         {info.gated}")
+        print(f"  Last modified: {info.last_modified}")
+        print(f"  Tags:          {', '.join(info.tags[:10])}")
+        print()
+        print(f"  Files ({len(info.files)}):")
+        for f in info.files:
+            marker = "[GGUF]" if f.is_gguf else "      "
+            size = format_bytes(f.size_bytes) if f.size_bytes else "?"
+            print(f"    {marker} {f.filename}  ({size})")
+
+    elif args.models_cmd == "download":
+        if not args.filename:
+            print("[models] ERROR: --filename is required for download")
+            print("[models] Use `models info <repo_id>` to see available files")
+            sys.exit(1)
+        print(f"[models] Downloading {args.filename} from {args.repo_id}...")
+
+        last_percent = [-1]
+        def progress_cb(p):
+            curr_pct = int(p.percent)
+            if curr_pct != last_percent[0] and curr_pct % 5 == 0:
+                last_percent[0] = curr_pct
+                print(f"  {p.percent:5.1f}%  {format_bytes(p.bytes_downloaded)} / {format_bytes(p.total_bytes)}  "
+                      f"({p.speed_mbps:.1f} MB/s, ETA {p.eta_seconds:.0f}s)")
+
+        result = mgr.download(args.repo_id, args.filename, progress_cb=progress_cb)
+        if result.success:
+            print()
+            print(f"[models] ✓ Downloaded {result.filename}")
+            print(f"[models]   Path: {result.local_path}")
+            print(f"[models]   Size: {format_bytes(result.size_bytes)}")
+            print(f"[models]   Time: {result.elapsed_seconds:.1f}s")
+        else:
+            print()
+            print(f"[models] ✗ FAILED: {result.error}")
+            sys.exit(1)
+
+    elif args.models_cmd == "list":
+        local = mgr.list_local_models()
+        if not local:
+            print(f"[models] No local models in {mgr.models_dir}")
+            return
+        print(f"[models] {len(local)} local models in {mgr.models_dir}:")
+        print()
+        print(f"{'Filename':<55} {'Size':>10} {'Repo':<40}")
+        print("-" * 110)
+        for m in local:
+            print(f"{m.filename:<55} {format_bytes(m.size_bytes):>10} {(m.repo_id or 'unknown'):<40}")
+
+    elif args.models_cmd == "delete":
+        if not args.filename:
+            print("[models] ERROR: --filename is required for delete")
+            sys.exit(1)
+        if mgr.delete_local_model(args.filename):
+            print(f"[models] ✓ Deleted {args.filename}")
+        else:
+            print(f"[models] ✗ File not found: {args.filename}")
+            sys.exit(1)
+
+    else:
+        print("[models] Available subcommands: search, info, download, list, delete")
+        print("  Use --help for details")
+
+    mgr.close()
+
+
 def main():
     p = argparse.ArgumentParser(prog="gguf-knowledge-extractor", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -502,6 +604,32 @@ def main():
     pcm.add_argument("reports", nargs="+", help="Two or more *_report.json paths")
     pcm.add_argument("--out", default="./download/comparison_report.json")
     pcm.set_defaults(func=cmd_compare)
+
+    # v4: models (Hugging Face Hub)
+    pmd = sub.add_parser("models", help="v4: Browse & download GGUF models from Hugging Face Hub")
+    pmd.add_argument("--models-dir", default="/home/z/my-project/models", help="Local models directory")
+    pmd.add_argument("--hf-token", default=None, help="Hugging Face API token (for gated models)")
+    md_sub = pmd.add_subparsers(dest="models_cmd", required=True)
+
+    md_search = md_sub.add_parser("search", help="Search HF Hub for GGUF models")
+    md_search.add_argument("query", help="Search query (e.g. 'llama 3 8b')")
+    md_search.add_argument("--limit", type=int, default=20)
+    md_search.add_argument("--sort", default="downloads", choices=["downloads", "likes", "lastModified", "createdAt"])
+    md_search.add_argument("--all-models", action="store_true", help="Include non-GGUF models in results")
+
+    md_info = md_sub.add_parser("info", help="Get detailed info for a model repo")
+    md_info.add_argument("repo_id", help="HF repo ID (e.g. 'hugging-quants/Llama-3.2-1B-Instruct-Q8_0-GGUF')")
+
+    md_dl = md_sub.add_parser("download", help="Download a specific file from a model repo")
+    md_dl.add_argument("repo_id", help="HF repo ID")
+    md_dl.add_argument("--filename", required=True, help="Filename to download (e.g. 'llama-3.2-1b-instruct-q8_0.gguf')")
+
+    md_list = md_sub.add_parser("list", help="List locally-downloaded models")
+
+    md_del = md_sub.add_parser("delete", help="Delete a local model file")
+    md_del.add_argument("filename", help="Filename to delete")
+
+    pmd.set_defaults(func=cmd_models)
 
     args = p.parse_args()
     args.func(args)

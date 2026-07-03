@@ -14,6 +14,7 @@ Endpoints:
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import time
 import uuid
@@ -34,15 +35,16 @@ from ..core.exporters.sqlite_exporter import export_sqlite
 from ..core.causal_tracer import CausalTracer
 from ..core.rome_editor import RomeEditor, EditRequest
 from ..core.fingerprint_compare import FingerprintComparator
+from ..core.model_manager import ModelManager, format_bytes
 
 
 STATIC_DIR = Path(__file__).parent / "static"
 JOBS_DIR = Path("/home/z/my-project/download/extraction_jobs")
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
 
-
-# In-memory job registry (sufficient for a local single-user tool)
+# In-memory registries (sufficient for a local single-user tool)
 JOBS: Dict[str, Dict[str, Any]] = {}
+DOWNLOADS: Dict[str, Dict[str, Any]] = {}  # v4: track active downloads from HF Hub
 
 
 def create_app() -> FastAPI:
@@ -126,6 +128,68 @@ def create_app() -> FastAPI:
                 "prefer_backend": prefer_backend,
                 "n_ctx": n_ctx,
                 "n_gpu_layers": n_gpu_layers,
+            },
+        }
+
+        background_tasks.add_task(
+            _run_extraction,
+            job_id,
+            str(gguf_path),
+            packs,
+            do_metadata,
+            do_weights,
+            do_probes,
+            do_attribution,
+            attribution_top_k,
+            server_url,
+            prefer_backend,
+            n_ctx,
+            n_gpu_layers,
+        )
+        return {"job_id": job_id, "status": "queued"}
+
+    @app.post("/api/extract-local")
+    async def api_extract_local(
+        background_tasks: BackgroundTasks,
+        local_path: str = Form(...),
+        packs: str = Form("all"),
+        do_metadata: bool = Form(True),
+        do_weights: bool = Form(True),
+        do_probes: bool = Form(True),
+        do_attribution: bool = Form(False),
+        attribution_top_k: int = Form(20),
+        server_url: str = Form("http://127.0.0.1:8080"),
+        prefer_backend: str = Form("auto"),
+        n_ctx: int = Form(4096),
+        n_gpu_layers: int = Form(0),
+    ):
+        """Extract from a local file path (e.g. a downloaded HF model)."""
+        gguf_path = Path(local_path)
+        if not gguf_path.exists() or not gguf_path.name.lower().endswith(".gguf"):
+            raise HTTPException(400, f"Invalid local path: {local_path}")
+
+        job_id = str(uuid.uuid4())[:8]
+        JOBS[job_id] = {
+            "id": job_id,
+            "status": "queued",
+            "gguf_path": str(gguf_path),
+            "gguf_filename": gguf_path.name,
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "progress": {"message": "queued", "current": 0, "total": 0},
+            "result_paths": {},
+            "error": None,
+            "options": {
+                "packs": packs,
+                "do_metadata": do_metadata,
+                "do_weights": do_weights,
+                "do_probes": do_probes,
+                "do_attribution": do_attribution,
+                "attribution_top_k": attribution_top_k,
+                "server_url": server_url,
+                "prefer_backend": prefer_backend,
+                "n_ctx": n_ctx,
+                "n_gpu_layers": n_gpu_layers,
+                "local_path": str(gguf_path),
             },
         }
 
@@ -300,7 +364,163 @@ def create_app() -> FastAPI:
         }
         return {"job_id": job_id, "status": "completed", "report": report_dict}
 
+    # ------------------------------------------------------------------ #
+    # v4 API: Hugging Face Hub model browser & downloader
+    # ------------------------------------------------------------------ #
+    MODELS_DIR = Path(os.environ.get("GGUF_MODELS_DIR", "/home/z/my-project/models"))
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+
+    def _get_model_manager() -> ModelManager:
+        return ModelManager(models_dir=MODELS_DIR)
+
+    @app.get("/api/models/search")
+    async def api_models_search(q: str = "", limit: int = 20, sort: str = "downloads"):
+        """Search HF Hub for GGUF models."""
+        if not q:
+            raise HTTPException(400, "Query parameter 'q' is required")
+        try:
+            mgr = _get_model_manager()
+            results = mgr.search(q, limit=min(limit, 50), sort=sort, gguf_only=True)
+            out = [_to_jsonable({
+                "repo_id": r.repo_id, "author": r.author, "model_name": r.model_name,
+                "downloads": r.downloads, "likes": r.likes,
+                "pipeline_tag": r.pipeline_tag, "tags": r.tags[:8],
+                "last_modified": r.last_modified, "gated": r.gated,
+                "gguf_file_count": len(r.gguf_files),
+            }) for r in results]
+            mgr.close()
+            return {"results": out, "count": len(out)}
+        except Exception as e:
+            raise HTTPException(500, f"Search failed: {e}")
+
+    @app.get("/api/models/info/{repo_id:path}")
+    async def api_models_info(repo_id: str):
+        """Get detailed info for a HF model repo."""
+        try:
+            mgr = _get_model_manager()
+            info = mgr.get_model_info(repo_id)
+            out = _to_jsonable({
+                "repo_id": info.repo_id, "author": info.author,
+                "downloads": info.downloads, "likes": info.likes,
+                "pipeline_tag": info.pipeline_tag, "tags": info.tags[:15],
+                "last_modified": info.last_modified, "gated": info.gated,
+                "created_at": info.created_at,
+                "files": [
+                    {"filename": f.filename, "size_bytes": f.size_bytes,
+                     "size_human": format_bytes(f.size_bytes) if f.size_bytes else "?",
+                     "is_gguf": f.is_gguf, "download_url": f.download_url}
+                    for f in info.files
+                ],
+                "card_data": info.card_data,
+            })
+            mgr.close()
+            return out
+        except Exception as e:
+            raise HTTPException(500, f"Info failed: {e}")
+
+    @app.post("/api/models/download")
+    async def api_models_download(
+        background_tasks: BackgroundTasks,
+        repo_id: str = Form(...),
+        filename: str = Form(...),
+    ):
+        """Start downloading a GGUF file from HF Hub. Returns a download_id for progress polling."""
+        download_id = str(uuid.uuid4())[:8]
+        DOWNLOADS[download_id] = {
+            "id": download_id,
+            "repo_id": repo_id,
+            "filename": filename,
+            "status": "queued",
+            "bytes_downloaded": 0,
+            "total_bytes": 0,
+            "speed_mbps": 0,
+            "eta_seconds": 0,
+            "percent": 0,
+            "error": None,
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "completed_at": None,
+            "local_path": None,
+        }
+        background_tasks.add_task(_run_download, download_id, repo_id, filename)
+        return {"download_id": download_id, "status": "queued"}
+
+    @app.get("/api/models/downloads")
+    async def api_models_downloads():
+        """List all downloads (active and completed)."""
+        return list(DOWNLOADS.values())
+
+    @app.get("/api/models/downloads/{download_id}")
+    async def api_models_download_status(download_id: str):
+        if download_id not in DOWNLOADS:
+            raise HTTPException(404, "Download not found")
+        return DOWNLOADS[download_id]
+
+    @app.get("/api/models/local")
+    async def api_models_local():
+        """List locally-downloaded models."""
+        try:
+            mgr = _get_model_manager()
+            local = mgr.list_local_models()
+            out = [_to_jsonable({
+                "filename": m.filename, "path": m.path,
+                "size_bytes": m.size_bytes,
+                "size_human": format_bytes(m.size_bytes),
+                "repo_id": m.repo_id, "downloaded_at": m.downloaded_at,
+            }) for m in local]
+            mgr.close()
+            return {"models": out, "count": len(out), "models_dir": str(MODELS_DIR)}
+        except Exception as e:
+            raise HTTPException(500, f"List failed: {e}")
+
+    @app.delete("/api/models/local/{filename}")
+    async def api_models_delete(filename: str):
+        """Delete a local model file."""
+        try:
+            mgr = _get_model_manager()
+            ok = mgr.delete_local_model(filename)
+            mgr.close()
+            if not ok:
+                raise HTTPException(404, "File not found")
+            return {"status": "deleted", "filename": filename}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"Delete failed: {e}")
+
     return app
+
+
+# ---------------------------------------------------------------------- #
+# v4 download worker
+# ---------------------------------------------------------------------- #
+def _run_download(download_id: str, repo_id: str, filename: str):
+    """Background worker for HF downloads."""
+    download = DOWNLOADS[download_id]
+    download["status"] = "downloading"
+
+    def progress_cb(p):
+        download["bytes_downloaded"] = p.bytes_downloaded
+        download["total_bytes"] = p.total_bytes
+        download["speed_mbps"] = p.speed_mbps
+        download["eta_seconds"] = p.eta_seconds
+        download["percent"] = p.percent
+
+    try:
+        mgr = ModelManager(models_dir=Path(os.environ.get("GGUF_MODELS_DIR", "/home/z/my-project/models")))
+        result = mgr.download(repo_id, filename, progress_cb=progress_cb)
+        if result.success:
+            download["status"] = "completed"
+            download["local_path"] = result.local_path
+            download["percent"] = 100.0
+        else:
+            download["status"] = "failed"
+            download["error"] = result.error
+        download["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        mgr.close()
+    except Exception as e:
+        download["status"] = "failed"
+        download["error"] = str(e)
+        download["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
 
 
 # ---------------------------------------------------------------------- #

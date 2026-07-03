@@ -18,6 +18,12 @@ A hybrid extraction tool that cracks open a GGUF file in two complementary ways:
 8. **ROME rank-1 fact editing** — overwrites specific factual associations in the model's MLP weights without retraining. Finds the layer+neuron storing a fact, applies a rank-1 update to W_down, writes a modified GGUF.
 9. **Cross-model fingerprint comparison** — loads 2+ attribution reports and computes a lineage score (0-1) based on fingerprint match, top-neuron Jaccard, top-token Jaccard, concept mastery correlation, and behavioral similarity. Detects when models share training data lineage.
 
+**v4 adds Hugging Face Hub integration (LM Studio-style):**
+10. **Model search** — search the HF Hub for GGUF-tagged models, sorted by downloads / likes / recency.
+11. **Model info** — get detailed info for any repo: file list with sizes, tags, downloads, likes, gated status.
+12. **One-click download** — download any GGUF file directly from HF Hub with resumable streaming, progress bar, and ETA.
+13. **Local model registry** — downloaded models are tracked with provenance (repo_id, download timestamp). Use them directly in Extract / Trace / Edit via a dropdown — no manual file upload.
+
 ## What gets extracted
 
 | Knowledge type | How | Output |
@@ -74,15 +80,24 @@ python scripts/start_web_ui.py 8000
 ```
 
 The UI lets you:
-- Drag-and-drop a `.gguf` file
+- Drag-and-drop a `.gguf` file, OR pick from a dropdown of models you've downloaded from HF Hub
 - Pick which probe packs to run
 - Configure inference backend (server URL, n_ctx, GPU layers)
 - Watch live progress
 - Browse results inline and download any of the 5 formats
+- **Browse & download GGUF models from Hugging Face Hub** directly in the UI — search, see file sizes, download with progress bar, then use them in Extract / Trace / Edit via the dropdown
 
 ### Run via CLI
 
 ```bash
+# v4: Browse & download models from Hugging Face Hub
+python gguf_knowledge_extractor/cli.py models search "llama 3 8b" --limit 10
+python gguf_knowledge_extractor/cli.py models info hugging-quants/Llama-3.2-1B-Instruct-Q8_0-GGUF
+python gguf_knowledge_extractor/cli.py models download hugging-quants/Llama-3.2-1B-Instruct-Q8_0-GGUF \
+    --filename llama-3.2-1b-instruct-q8_0.gguf
+python gguf_knowledge_extractor/cli.py models list
+python gguf_knowledge_extractor/cli.py models delete llama-3.2-1b-instruct-q8_0.gguf
+
 # Full extraction (metadata + weights + all probes + v2 attribution)
 python gguf_knowledge_extractor/cli.py extract \
     --gguf ./models/llama-7b.Q4_K_M.gguf \
@@ -226,7 +241,7 @@ probes:
 ```
 gguf_knowledge_extractor/
 ├── __init__.py
-├── cli.py                              # CLI entry point (8 subcommands)
+├── cli.py                              # CLI entry point (9 subcommands incl. `models`)
 ├── core/
 │   ├── gguf_parser.py                  # Reads metadata via gguf-py
 │   ├── weight_inspector.py             # Tensor statistics & embedding analysis
@@ -237,6 +252,7 @@ gguf_knowledge_extractor/
 │   ├── causal_tracer.py                # v3: per-fact causal tracing
 │   ├── rome_editor.py                  # v3: ROME rank-1 fact editing + GGUF patching
 │   ├── fingerprint_compare.py          # v3: cross-model lineage comparison
+│   ├── model_manager.py                # v4: Hugging Face Hub browser & downloader
 │   ├── extractor.py                    # Top-level orchestrator
 │   ├── inference/
 │   │   └── base.py                     # ServerBackend / PythonBackend / AutoBackend
@@ -248,9 +264,9 @@ gguf_knowledge_extractor/
 │       ├── graph_exporter.py           # GraphML + RDF/Turtle (with attribution nodes)
 │       └── sqlite_exporter.py          # 9 + 5 v2 tables = 14 tables total
 └── web/
-    ├── server.py                       # FastAPI app (v1 + v2 + v3 endpoints)
+    ├── server.py                       # FastAPI app (v1 + v2 + v3 + v4 endpoints)
     └── static/
-        ├── index.html                  # 7 views: extract, trace, edit, compare, jobs, packs, backends
+        ├── index.html                  # 8 views: extract, trace, edit, compare, models, jobs, packs, backends
         ├── style.css
         └── app.js
 
@@ -259,7 +275,7 @@ scripts/
     ├── make_test_gguf.py               # Generates a tiny test GGUF (full Llama arch)
     └── start_web_ui.py
 tests/
-    └── smoke_test.py                   # End-to-end test of all 8 CLI subcommands
+    └── smoke_test.py                   # End-to-end test of all 9 CLI subcommands
 ```
 
 ## v2 SQLite schema (attribution tables)
