@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import gguf
 
-from .forward_pass import NumpyLlamaForward, LogitLensResult
+from .forward_pass import NumpyLlamaForward
 from .mlp_analyzer import MLPAnalyzer
 
 
@@ -280,8 +280,6 @@ class CausalTracer:
 
             # For each top neuron, compute activation = hidden @ key_vector
             # (where key_vector = column i of W_gate or W_up)
-            # Find the layer's tensors
-            from .forward_pass import NumpyLlamaForward
             # Reuse the forward_pass's tensor loading
             fp = self.forward_pass
             key_source = None

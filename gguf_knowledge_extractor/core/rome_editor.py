@@ -42,7 +42,6 @@ collateral damage than the full ROME update.
 """
 from __future__ import annotations
 
-import os
 import shutil
 import struct
 import time
@@ -339,53 +338,8 @@ class RomeEditor:
             tname = e["tensor_name"]
             edits_by_tensor.setdefault(tname, []).append(e)
 
-        # Open original reader
-        reader = gguf.GGUFReader(original_gguf_path)
-
-        # For each tensor that has edits, apply them by directly modifying the
-        # underlying memory (the GGUFReader uses mmap, so we can write through
-        # it if the file is opened read-write). Simpler approach: copy the file
-        # first, then open in read-write mode and patch the bytes.
-
-        # Copy the file
+        # Copy the file first, then patch the bytes in place
         shutil.copyfile(original_gguf_path, output_gguf_path)
-
-        # Open the copy for patching
-        # We need to find the offset of each tensor's data in the file, then
-        # write the modified column.
-        # The GGUFReader gives us access to tensor.data which is a memoryview
-        # into the mmap'd file. If we open the file in read-write mode, we can
-        # patch the bytes directly.
-
-        # Re-open the original file just to find tensor offsets
-        original_reader = gguf.GGUFReader(original_gguf_path)
-        tensor_offsets: Dict[str, Tuple[int, int, str, List[int]]] = {}  # name -> (data_offset, n_bytes, dtype, shape)
-        for t in original_reader.tensors:
-            name = t.name.decode("utf-8") if isinstance(t.name, bytes) else str(t.name)
-            # t.data is a memoryview; its offset into the file can be computed
-            # from the underlying buffer
-            try:
-                data_offset = t.data.tobytes().__sizeof__()  # not the offset
-            except Exception:
-                data_offset = 0
-            # Actually, the GGUFReader stores the offset in t.field.offset or
-            # t.start_offset. Let me check the struct.
-            # In gguf-py, ReaderTensor has .data (memoryview) and the offset
-            # into the file is t.field.offset (the original offset of the field).
-            # But for tensors, the offset to the data section is stored
-            # separately in the tensor info.
-            #
-            # The simplest way: use the _build_tensor_info path which records
-            # the offset where each tensor's data begins.
-            # We can access this via reader._tensors or by examining the field.
-
-            # Let me use a different approach: compute the offset by reading
-            # the tensor info section manually.
-            pass
-
-        # OK, the cleanest approach is to use gguf.GGUFWriter to build a new
-        # file from scratch with all tensors + modified ones. This is more
-        # code but reliable.
         return self._write_modified_gguf(original_gguf_path, output_gguf_path, edits_by_tensor)
 
     def _write_modified_gguf(
@@ -394,56 +348,22 @@ class RomeEditor:
         output_path: str,
         edits_by_tensor: Dict[str, List[Dict[str, Any]]],
     ) -> str:
-        """Build a new GGUF file with the modified tensors.
+        """Patch the bytes of the output GGUF in place.
 
-        This is a manual file-copy approach: we read the original file as
-        bytes, find each modified tensor's data offset, and patch the bytes
-        in place. We need the original reader to find offsets.
+        Strategy: walk the original file's header to compute the absolute file
+        offset of each tensor's data section, then patch only the columns we
+        need to modify. The output file is already a copy of the original.
         """
-        # Get tensor info from the original file
+        # Get tensor type/shape info from the original reader (we don't need
+        # byte offsets from it — we compute those manually below).
         original_reader = gguf.GGUFReader(original_path)
         tensor_info: Dict[str, Dict[str, Any]] = {}
         for t in original_reader.tensors:
             name = t.name.decode("utf-8") if isinstance(t.name, bytes) else str(t.name)
-            # The data offset within the file can be derived from the tensor's
-            # data memoryview. We need the absolute offset.
-            # In gguf-py, ReaderTensor.data is a memoryview into the mmap'd
-            # file. The offset is the difference between the data pointer and
-            # the start of the file.
-            #
-            # We can get this from the underlying buffer's obj attribute.
-            try:
-                # The memoryview's offset into the underlying buffer
-                mv = t.data
-                # Get the underlying buffer (the mmap)
-                # mv.obj gives us the parent buffer
-                # The offset is mv.tobytes() ... no, we need to find the byte
-                # offset of the data in the file.
-                #
-                # Hack: compute it from the array address
-                buf_addr = mv.__buffer__(0)  # not standard
-            except Exception:
-                buf_addr = None
-
-            # Use a different approach: use the gguf reader's internal _build
-            # to find offsets. The reader._tensors list has ReaderTensor
-            # objects with a `field` attribute that has `offset` (the offset
-            # of the tensor INFO field, not the data).
-            #
-            # Actually, looking at gguf_reader.py source:
-            # ReaderTensor has .data which is sliced from the mmap buffer.
-            # The slice's start offset can be recovered via:
-            #   tensor.data.obj  (the parent buffer)
-            #   tensor.data.contiguous().tobytes() gives us the data
-            #
-            # The cleanest way: re-implement offset computation by walking
-            # through the file header and tensor info section.
-
             tensor_info[name] = {
                 "tensor_type": int(t.tensor_type),
                 "shape": [int(s) for s in t.shape],
                 "n_bytes": int(t.n_bytes) if hasattr(t, "n_bytes") else 0,
-                "data": t.data,  # memoryview
             }
 
         # Compute offsets by walking through the file

@@ -24,7 +24,6 @@ Edges:
 """
 from __future__ import annotations
 
-import xml.sax.saxutils as saxutils
 from pathlib import Path
 from typing import Union
 

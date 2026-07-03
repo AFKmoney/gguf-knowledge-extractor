@@ -13,8 +13,6 @@ This is the "mechanistic interpretability at a glance" layer:
 """
 from __future__ import annotations
 
-import json
-import math
 from dataclasses import dataclass, asdict, field
 from typing import Any, Dict, List, Optional, Tuple
 

@@ -258,6 +258,8 @@ probe_packs/                            # 8 default YAML packs (94 probes total)
 scripts/
     ├── make_test_gguf.py               # Generates a tiny test GGUF (full Llama arch)
     └── start_web_ui.py
+tests/
+    └── smoke_test.py                   # End-to-end test of all 8 CLI subcommands
 ```
 
 ## v2 SQLite schema (attribution tables)
@@ -287,6 +289,16 @@ For each transformer block's MLP:
 5. **Token attribution:** For each top neuron, compute `embedding_matrix @ key_vector` to find which vocabulary tokens most strongly activate that neuron, and `cosine(embedding_matrix, value_vector)` to find which tokens this neuron would "produce" if it fired.
 
 6. **Knowledge fingerprint:** SHA-256 of the global top-50 neurons' (layer, neuron_idx, top_activating_tokens) tuple. Two models with the same architecture but different training will have different fingerprints.
+
+## Tests
+
+A smoke test exercises every CLI subcommand end-to-end on a synthetic test GGUF:
+
+```bash
+python tests/smoke_test.py
+```
+
+This generates a tiny 3-layer Llama-arch GGUF (450KB), runs all 8 CLI subcommands (`packs`, `backends`, `inspect`, `attribute`, `trace`, `edit`, `extract`, `compare`), and verifies that every output JSON is parseable, every SQLite database has the expected 15 tables, and the ROME-edited GGUF still loads correctly in `gguf-py`.
 
 ## Limitations & honest notes (v1 + v2 + v3)
 

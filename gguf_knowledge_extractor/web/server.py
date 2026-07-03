@@ -14,20 +14,19 @@ Endpoints:
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, BackgroundTasks
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..core.extractor import KnowledgeExtractor
 from ..core.inference.base import list_available_backends
-from ..core.probes.base import list_default_packs, load_probe_packs
+from ..core.probes.base import list_default_packs
 from ..core.exporters.json_exporter import export_json
 from ..core.exporters.markdown_exporter import export_markdown
 from ..core.exporters.graph_exporter import export_graphml, export_turtle
@@ -350,7 +349,6 @@ def _run_trace(job_id: str, gguf_path: str, packs_str: str, top_k: int):
 
         job_dir = Path(gguf_path).parent
         out_path = job_dir / f"{Path(gguf_path).stem}_causal_trace.json"
-        import json
         with open(out_path, "w") as f:
             json.dump(report_dict, f, indent=2, default=str)
 
@@ -390,7 +388,6 @@ def _run_edit(job_id: str, gguf_path: str, edits_data):
         import dataclasses
         report_dict = _to_jsonable(dataclasses.asdict(report))
 
-        import json
         report_path = job_dir / f"{Path(gguf_path).stem}_edit_report.json"
         with open(report_path, "w") as f:
             json.dump(report_dict, f, indent=2, default=str)

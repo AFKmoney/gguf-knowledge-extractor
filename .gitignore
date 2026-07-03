@@ -1,2 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+dist/
+build/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project artifacts
+download/
+*.gguf
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+/tmp/
+.cache/
+
+# Local config
+.env
+.env.local
+
+# Environment-specific (not part of this project)
 skills/
-node_modules/
+upload/
+worklog.md

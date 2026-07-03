@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -35,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from gguf_knowledge_extractor.core.extractor import KnowledgeExtractor
 from gguf_knowledge_extractor.core.inference.base import list_available_backends
-from gguf_knowledge_extractor.core.probes.base import list_default_packs, get_pack_by_name
+from gguf_knowledge_extractor.core.probes.base import list_default_packs
 from gguf_knowledge_extractor.core.exporters.json_exporter import export_json
 from gguf_knowledge_extractor.core.exporters.markdown_exporter import export_markdown
 from gguf_knowledge_extractor.core.exporters.graph_exporter import export_graphml, export_turtle

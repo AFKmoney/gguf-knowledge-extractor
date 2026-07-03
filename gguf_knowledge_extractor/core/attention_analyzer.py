@@ -25,7 +25,7 @@ We detect these by inspecting the W_q, W_k, W_v, W_o matrices per head:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional
 
 import numpy as np
