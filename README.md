@@ -13,6 +13,11 @@ A hybrid extraction tool that cracks open a GGUF file in two complementary ways:
 5. **Per-fact attribution** — for each fact probe, attributes the fact to the layer+neuron whose key vector is most strongly activated by the prompt's tokens.
 6. **Knowledge fingerprint** — a SHA-256 hash of the model's top global memory neurons, giving each model a unique structural signature.
 
+**v3 adds full mechanistic interpretability:**
+7. **Logit-lens causal tracing** — a pure-numpy forward pass through the transformer, projecting hidden states through the lm_head at every layer to find the exact layer where each fact is "known". No inference backend needed.
+8. **ROME rank-1 fact editing** — overwrites specific factual associations in the model's MLP weights without retraining. Finds the layer+neuron storing a fact, applies a rank-1 update to W_down, writes a modified GGUF.
+9. **Cross-model fingerprint comparison** — loads 2+ attribution reports and computes a lineage score (0-1) based on fingerprint match, top-neuron Jaccard, top-token Jaccard, concept mastery correlation, and behavioral similarity. Detects when models share training data lineage.
+
 ## What gets extracted
 
 | Knowledge type | How | Output |
@@ -84,6 +89,28 @@ python gguf_knowledge_extractor/cli.py extract \
     --out ./out/ \
     --attribution
 
+# v3: Logit-lens causal tracing (finds which layer knows each fact)
+python gguf_knowledge_extractor/cli.py trace \
+    --gguf ./models/llama-7b.gguf \
+    --out ./out/
+
+# v3: ROME rank-1 fact editing (overwrite a fact in the GGUF)
+python gguf_knowledge_extractor/cli.py edit \
+    --gguf ./models/llama-7b.gguf \
+    --subject "The Eiffel Tower" \
+    --prompt "The Eiffel Tower is located in the city of" \
+    --target "Berlin"
+
+# v3: ROME editing with multiple edits from JSON file
+python gguf_knowledge_extractor/cli.py edit \
+    --gguf model.gguf \
+    --edits-file edits.json
+
+# v3: Cross-model fingerprint comparison
+python gguf_knowledge_extractor/cli.py compare \
+    report_a.json report_b.json report_c.json \
+    --out comparison.json
+
 # v2 attribution only (no inference required — just weights)
 python gguf_knowledge_extractor/cli.py attribute \
     --gguf ./models/anything.gguf \
@@ -94,25 +121,23 @@ python gguf_knowledge_extractor/cli.py attribute \
 python gguf_knowledge_extractor/cli.py inspect \
     --gguf ./models/anything.gguf \
     --out ./out/
+```
 
-# Pick specific probe packs
-python gguf_knowledge_extractor/cli.py extract \
-    --gguf model.gguf \
-    --packs facts_geography,concepts_programming \
-    --attribution
+### edits.json format (for `edit --edits-file`)
 
-# Use llama.cpp server
-python gguf_knowledge_extractor/cli.py extract \
-    --gguf model.gguf \
-    --prefer server \
-    --server-url http://127.0.0.1:8080 \
-    --attribution
-
-# List available probe packs
-python gguf_knowledge_extractor/cli.py packs
-
-# Check backend availability
-python gguf_knowledge_extractor/cli.py backends
+```json
+[
+  {
+    "subject": "The Eiffel Tower",
+    "prompt": "The Eiffel Tower is located in the city of",
+    "target_object": "Berlin"
+  },
+  {
+    "subject": "Mount Everest",
+    "prompt": "Mount Everest is located in",
+    "target_object": "Antarctica"
+  }
+]
 ```
 
 ## Probe packs
@@ -201,13 +226,17 @@ probes:
 ```
 gguf_knowledge_extractor/
 ├── __init__.py
-├── cli.py                              # CLI entry point
+├── cli.py                              # CLI entry point (8 subcommands)
 ├── core/
 │   ├── gguf_parser.py                  # Reads metadata via gguf-py
 │   ├── weight_inspector.py             # Tensor statistics & embedding analysis
 │   ├── mlp_analyzer.py                 # v2: ROME-style MLP memory decomposition
 │   ├── attention_analyzer.py           # v2: copy/induction head detection
 │   ├── knowledge_attribution.py        # v2: attribution orchestrator + fingerprint
+│   ├── forward_pass.py                 # v3: pure-numpy Llama forward pass (logit lens)
+│   ├── causal_tracer.py                # v3: per-fact causal tracing
+│   ├── rome_editor.py                  # v3: ROME rank-1 fact editing + GGUF patching
+│   ├── fingerprint_compare.py          # v3: cross-model lineage comparison
 │   ├── extractor.py                    # Top-level orchestrator
 │   ├── inference/
 │   │   └── base.py                     # ServerBackend / PythonBackend / AutoBackend
@@ -219,15 +248,15 @@ gguf_knowledge_extractor/
 │       ├── graph_exporter.py           # GraphML + RDF/Turtle (with attribution nodes)
 │       └── sqlite_exporter.py          # 9 + 5 v2 tables = 14 tables total
 └── web/
-    ├── server.py                       # FastAPI app
+    ├── server.py                       # FastAPI app (v1 + v2 + v3 endpoints)
     └── static/
-        ├── index.html
+        ├── index.html                  # 7 views: extract, trace, edit, compare, jobs, packs, backends
         ├── style.css
         └── app.js
 
 probe_packs/                            # 8 default YAML packs (94 probes total)
 scripts/
-    ├── make_test_gguf.py               # Generates a tiny test GGUF
+    ├── make_test_gguf.py               # Generates a tiny test GGUF (full Llama arch)
     └── start_web_ui.py
 ```
 
@@ -259,16 +288,21 @@ For each transformer block's MLP:
 
 6. **Knowledge fingerprint:** SHA-256 of the global top-50 neurons' (layer, neuron_idx, top_activating_tokens) tuple. Two models with the same architecture but different training will have different fingerprints.
 
-## Limitations & honest notes (v1 + v2)
+## Limitations & honest notes (v1 + v2 + v3)
 
 - **Quantized tensor dequantization** uses `gguf.quants.dequantize` when available; for unknown quantization types it falls back to byte-level statistics (still informative but less precise).
 - **Embedding outlier tokens** are computed on a 2000-token random sample to keep memory bounded — for very large vocabs (>50k) this is a sample, not the full population.
 - **Capacity estimate** uses the ~2-bits-per-parameter heuristic from scaling-law literature; treat it as an order-of-magnitude estimate, not a precise measurement.
 - **Behavioral bias detection** is heuristic (keyword-based) — for serious bias audits, manually review the response excerpts in the Markdown report.
 - **LLM-judge mode** is plumbed but not auto-evaluated — you'd need to wire up a second-pass judge call.
-- **v2 per-fact attribution** uses a weight-only heuristic when no inference backend is available: it finds the layer+neuron whose key vector is most strongly activated by tokens in the prompt. This is approximate — true causal tracing (logit lens / activation patching) requires hidden-state access from `llama-cpp-python`, which is gated behind availability.
+- **v2 per-fact attribution** uses a weight-only heuristic when no inference backend is available: it finds the layer+neuron whose key vector is most strongly activated by tokens in the prompt. This is approximate — true causal tracing (logit lens / activation patching) requires hidden-state access.
 - **v2 attention head detection** uses cheap proxies (V·O ≈ identity for copy heads, low-rank Q·Qᵀ for induction heads). These are well-established heuristics from Anthropic's interpretability work but are not substitutes for full attention pattern analysis on real inputs.
 - **Gated vs non-gated MLPs**: the analyzer correctly handles both — for gated MLPs (Llama, Mistral, etc.) it uses `W_gate` as the key source; for non-gated MLPs (GPT-2, Phi) it uses `W_up`.
+- **v3 forward pass** is pure-numpy and runs on CPU. For a 7B model, a single forward pass through 32 layers on a short prompt takes ~5-30 seconds. It's fast enough for causal tracing but not for batch inference. Supports Llama-arch only (Llama, Mistral, Qwen-2, etc.) — falls back gracefully for other architectures.
+- **v3 tokenizer** is a greedy longest-match against the GGUF vocab — works for BPE/SPM vocabs but isn't a true BPE merge. For production use, consider wiring up `llama-cpp-python`'s tokenizer or HuggingFace `tokenizers`.
+- **v3 ROME editing** uses the simplified "direct rank-1 overwrite" rather than the full covariance-based ROME update. Works well for single-fact edits but may have more collateral damage than the original paper's method. Only supports F32 and F16 tensors — quantized tensors (Q4_K_M, etc.) cannot be patched in place and would require requantization.
+- **v3 ROME editing verification** is in-memory only — after writing the modified GGUF, we verify the edit by re-running the forward pass on the in-memory modified weights. To verify the written file, you'd need to load it in llama.cpp or re-run `trace` on the edited GGUF.
+- **v3 cross-model comparison** is most meaningful for same-architecture models. Comparing a 7B Llama to a 13B Mistral will produce a low lineage score even if they share training data, because the (layer, neuron) pairs don't align.
 
 ## License
 

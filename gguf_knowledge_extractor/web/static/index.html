@@ -17,6 +17,9 @@
     </div>
     <nav>
       <a href="#" id="nav-extract" class="active">Extract</a>
+      <a href="#" id="nav-trace">v3: Trace</a>
+      <a href="#" id="nav-edit">v3: Edit</a>
+      <a href="#" id="nav-compare">v3: Compare</a>
       <a href="#" id="nav-jobs">Jobs</a>
       <a href="#" id="nav-packs">Probe Packs</a>
       <a href="#" id="nav-backends">Backends</a>
@@ -92,6 +95,80 @@
 
       <div class="card actions">
         <button id="btn-extract" class="btn-primary" disabled>Extract knowledge →</button>
+      </div>
+    </section>
+
+    <!-- v3: Trace view -->
+    <section id="view-trace" class="view">
+      <div class="card">
+        <h2>v3: Logit-Lens Causal Tracing</h2>
+        <p class="hint">Runs a pure-numpy forward pass on the GGUF and projects hidden states through the lm_head at each layer. Finds the earliest layer where each fact's answer appears in top-K predictions. <strong>No inference backend required</strong> — works directly on weights.</p>
+        <p class="hint">Requires Llama-architecture with full attn + MLP tensors (attn_q/k/v/output, ffn_gate/up/down, attn_norm, ffn_norm, output_norm, output).</p>
+      </div>
+      <div class="card">
+        <h2>Upload GGUF</h2>
+        <div class="dropzone" id="trace-dropzone">
+          <input type="file" id="trace-file-input" accept=".gguf" hidden />
+          <div class="dz-content">
+            <div class="dz-icon">🧠</div>
+            <p><strong>Drop a .gguf file</strong> or click to browse</p>
+          </div>
+        </div>
+        <p class="selected-file" id="trace-selected-file"></p>
+        <div class="form-row" style="margin-top:14px;">
+          <label>Top-K per layer<input type="number" id="trace-top-k" value="10" min="1" max="50" /></label>
+        </div>
+        <button id="btn-trace" class="btn-primary" disabled style="margin-top:14px;">Run causal trace →</button>
+      </div>
+    </section>
+
+    <!-- v3: Edit view -->
+    <section id="view-edit" class="view">
+      <div class="card">
+        <h2>v3: ROME Rank-1 Fact Editing</h2>
+        <p class="hint">Overwrites specific factual associations in the model's MLP weights — <strong>without retraining</strong>. Uses the ROME algorithm: finds the layer+neuron storing a fact, then applies a rank-1 update to W_down that replaces the stored value with a new target.</p>
+        <p class="hint">The modified GGUF is saved as a new file. The original is never modified.</p>
+      </div>
+      <div class="card">
+        <h2>Upload GGUF</h2>
+        <div class="dropzone" id="edit-dropzone">
+          <input type="file" id="edit-file-input" accept=".gguf" hidden />
+          <div class="dz-content">
+            <div class="dz-icon">✏️</div>
+            <p><strong>Drop a .gguf file</strong> or click to browse</p>
+          </div>
+        </div>
+        <p class="selected-file" id="edit-selected-file"></p>
+      </div>
+      <div class="card">
+        <h2>Edit requests</h2>
+        <p class="hint">Each edit specifies: subject (e.g. "The Eiffel Tower"), prompt (full question), and target_object (new answer).</p>
+        <div id="edits-list"></div>
+        <button id="btn-add-edit" class="btn-secondary" style="margin-top:10px;">+ Add edit</button>
+      </div>
+      <div class="card actions">
+        <button id="btn-edit" class="btn-primary" disabled>Apply ROME edits →</button>
+      </div>
+    </section>
+
+    <!-- v3: Compare view -->
+    <section id="view-compare" class="view">
+      <div class="card">
+        <h2>v3: Cross-Model Fingerprint Comparison</h2>
+        <p class="hint">Upload 2 or more attribution JSON reports (from previous extract runs). Compares fingerprints, top neurons, top tokens, concept mastery, and behavioral profile to detect shared training data lineage.</p>
+      </div>
+      <div class="card">
+        <h2>Upload attribution reports</h2>
+        <div class="dropzone" id="compare-dropzone">
+          <input type="file" id="compare-file-input" accept=".json" multiple hidden />
+          <div class="dz-content">
+            <div class="dz-icon">🔍</div>
+            <p><strong>Drop 2+ *_report.json files</strong> or click to browse</p>
+            <p class="hint">Use the file inputs from previous extraction jobs.</p>
+          </div>
+        </div>
+        <div id="compare-files-list" style="margin-top:10px;"></div>
+        <button id="btn-compare" class="btn-primary" disabled style="margin-top:14px;">Compare models →</button>
       </div>
     </section>
 

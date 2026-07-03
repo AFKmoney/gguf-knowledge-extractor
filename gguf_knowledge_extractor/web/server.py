@@ -32,6 +32,9 @@ from ..core.exporters.json_exporter import export_json
 from ..core.exporters.markdown_exporter import export_markdown
 from ..core.exporters.graph_exporter import export_graphml, export_turtle
 from ..core.exporters.sqlite_exporter import export_sqlite
+from ..core.causal_tracer import CausalTracer
+from ..core.rome_editor import RomeEditor, EditRequest
+from ..core.fingerprint_compare import FingerprintComparator
 
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -179,7 +182,257 @@ def create_app() -> FastAPI:
             raise HTTPException(404, "File missing on disk")
         return FileResponse(str(path), media_type=mime, filename=path.name)
 
+    # ------------------------------------------------------------------ #
+    # v3 API: causal trace, ROME edit, fingerprint compare
+    # ------------------------------------------------------------------ #
+
+    @app.post("/api/trace")
+    async def api_trace(
+        background_tasks: BackgroundTasks,
+        file: UploadFile = File(...),
+        packs: str = Form(""),
+        top_k: int = Form(10),
+    ):
+        """v3: Run logit-lens causal tracing on fact probes."""
+        if not file.filename or not file.filename.lower().endswith(".gguf"):
+            raise HTTPException(400, "File must be a .gguf file")
+
+        job_id = str(uuid.uuid4())[:8]
+        job_dir = JOBS_DIR / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+
+        gguf_path = job_dir / file.filename
+        with open(gguf_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+
+        JOBS[job_id] = {
+            "id": job_id,
+            "status": "queued",
+            "gguf_path": str(gguf_path),
+            "gguf_filename": file.filename,
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "progress": {"message": "queued", "current": 0, "total": 0},
+            "result_paths": {},
+            "error": None,
+            "options": {"packs": packs, "top_k": top_k},
+            "kind": "trace",
+        }
+
+        background_tasks.add_task(_run_trace, job_id, str(gguf_path), packs, top_k)
+        return {"job_id": job_id, "status": "queued"}
+
+    @app.post("/api/edit")
+    async def api_edit(
+        background_tasks: BackgroundTasks,
+        file: UploadFile = File(...),
+        edits_json: str = Form(...),  # JSON string of [{subject, prompt, target_object}]
+    ):
+        """v3: Run ROME rank-1 fact editing."""
+        if not file.filename or not file.filename.lower().endswith(".gguf"):
+            raise HTTPException(400, "File must be a .gguf file")
+
+        import json as _json
+        try:
+            edits_data = _json.loads(edits_json)
+        except Exception as e:
+            raise HTTPException(400, f"Invalid edits JSON: {e}")
+
+        job_id = str(uuid.uuid4())[:8]
+        job_dir = JOBS_DIR / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+
+        gguf_path = job_dir / file.filename
+        with open(gguf_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+
+        JOBS[job_id] = {
+            "id": job_id,
+            "status": "queued",
+            "gguf_path": str(gguf_path),
+            "gguf_filename": file.filename,
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "progress": {"message": "queued", "current": 0, "total": 0},
+            "result_paths": {},
+            "error": None,
+            "options": {"edits": edits_data},
+            "kind": "edit",
+        }
+
+        background_tasks.add_task(_run_edit, job_id, str(gguf_path), edits_data)
+        return {"job_id": job_id, "status": "queued"}
+
+    @app.post("/api/compare")
+    async def api_compare(reports: List[UploadFile] = File(...)):
+        """v3: Cross-model fingerprint comparison. Upload 2+ attribution JSON reports."""
+        if len(reports) < 2:
+            raise HTTPException(400, "Need at least 2 reports to compare")
+
+        job_id = str(uuid.uuid4())[:8]
+        job_dir = JOBS_DIR / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+
+        report_paths = []
+        for f in reports:
+            p = job_dir / f.filename
+            with open(p, "wb") as out:
+                shutil.copyfileobj(f.file, out)
+            report_paths.append(str(p))
+
+        comparator = FingerprintComparator()
+        report = comparator.compare_all(report_paths)
+
+        import dataclasses, json as _json
+        report_dict = _to_jsonable(dataclasses.asdict(report))
+
+        # Save
+        out_path = job_dir / "comparison.json"
+        with open(out_path, "w") as f:
+            _json.dump(report_dict, f, indent=2, default=str)
+
+        JOBS[job_id] = {
+            "id": job_id,
+            "status": "completed",
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "completed_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "result_paths": {"json": str(out_path)},
+            "error": None,
+            "kind": "compare",
+            "report_preview": report_dict,
+        }
+        return {"job_id": job_id, "status": "completed", "report": report_dict}
+
     return app
+
+
+# ---------------------------------------------------------------------- #
+# v3 background workers
+# ---------------------------------------------------------------------- #
+def _run_trace(job_id: str, gguf_path: str, packs_str: str, top_k: int):
+    """Background worker for causal tracing."""
+    import gguf
+    job = JOBS[job_id]
+    job["status"] = "running"
+    try:
+        reader = gguf.GGUFReader(gguf_path)
+        fields = _load_fields(reader)
+
+        tracer = CausalTracer(reader, fields, top_k=top_k)
+        if not tracer.is_available():
+            job["status"] = "failed"
+            job["error"] = "Forward pass not available for this GGUF (need Llama-arch with full tensors)"
+            return
+
+        # Load fact probes
+        all_packs = list_default_packs()
+        fact_packs = [p for p in all_packs if p.category == "facts"]
+        if packs_str:
+            names = {n.strip() for n in packs_str.split(",") if n.strip()}
+            fact_packs = [p for p in fact_packs if p.name in names]
+        if not fact_packs:
+            fact_packs = [p for p in all_packs if p.category == "facts"]
+
+        facts = []
+        for pack in fact_packs:
+            for probe in pack.probes:
+                facts.append({
+                    "probe_id": probe.id,
+                    "prompt": probe.prompt,
+                    "expected": probe.expected,
+                    "domain": pack.domain,
+                    "source_pack": pack.name,
+                })
+
+        job["progress"] = {"message": f"Tracing {len(facts)} facts", "current": 0, "total": len(facts)}
+        report = tracer.trace_facts(facts)
+
+        import dataclasses
+        report_dict = _to_jsonable(dataclasses.asdict(report))
+
+        job_dir = Path(gguf_path).parent
+        out_path = job_dir / f"{Path(gguf_path).stem}_causal_trace.json"
+        import json
+        with open(out_path, "w") as f:
+            json.dump(report_dict, f, indent=2, default=str)
+
+        job["result_paths"] = {"json": str(out_path)}
+        job["report_preview"] = report_dict
+        job["status"] = "completed"
+        job["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception as e:
+        import traceback
+        job["status"] = "failed"
+        job["error"] = str(e)
+        job["traceback"] = traceback.format_exc()
+
+
+def _run_edit(job_id: str, gguf_path: str, edits_data):
+    """Background worker for ROME editing."""
+    import gguf
+    job = JOBS[job_id]
+    job["status"] = "running"
+    try:
+        reader = gguf.GGUFReader(gguf_path)
+        fields = _load_fields(reader)
+
+        editor = RomeEditor(reader, fields)
+        if not editor.is_available():
+            job["status"] = "failed"
+            job["error"] = "Forward pass not available for this GGUF"
+            return
+
+        requests = [EditRequest(**e) for e in edits_data]
+        job_dir = Path(gguf_path).parent
+        output_gguf = job_dir / f"{Path(gguf_path).stem}_edited.gguf"
+
+        job["progress"] = {"message": f"Editing {len(requests)} facts", "current": 0, "total": len(requests)}
+        report = editor.edit_facts(requests, gguf_path, str(output_gguf))
+
+        import dataclasses
+        report_dict = _to_jsonable(dataclasses.asdict(report))
+
+        import json
+        report_path = job_dir / f"{Path(gguf_path).stem}_edit_report.json"
+        with open(report_path, "w") as f:
+            json.dump(report_dict, f, indent=2, default=str)
+
+        job["result_paths"] = {
+            "json": str(report_path),
+            "edited_gguf": report.output_gguf_path,
+        }
+        job["report_preview"] = report_dict
+        job["status"] = "completed"
+        job["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception as e:
+        import traceback
+        job["status"] = "failed"
+        job["error"] = str(e)
+        job["traceback"] = traceback.format_exc()
+
+
+def _load_fields(reader):
+    """Load GGUF metadata fields into a plain dict."""
+    import gguf
+    fields = {}
+    for fname in reader.fields.keys():
+        try:
+            f = reader.get_field(fname)
+            if len(f.types) == 1 and f.types[0] == gguf.GGUFValueType.ARRAY:
+                arr = f.parts[f.data[0]] if f.data else None
+                fields[fname] = arr.tolist() if arr is not None and hasattr(arr, "tolist") else None
+            else:
+                try:
+                    v = f.contents()
+                    if hasattr(v, "tolist"):
+                        fields[fname] = v.tolist()
+                    elif hasattr(v, "item"):
+                        fields[fname] = v.item()
+                    else:
+                        fields[fname] = v
+                except Exception:
+                    fields[fname] = None
+        except Exception:
+            pass
+    return fields
 
 
 # ---------------------------------------------------------------------- #

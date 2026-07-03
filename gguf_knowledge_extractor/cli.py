@@ -25,6 +25,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -39,6 +40,9 @@ from gguf_knowledge_extractor.core.exporters.json_exporter import export_json
 from gguf_knowledge_extractor.core.exporters.markdown_exporter import export_markdown
 from gguf_knowledge_extractor.core.exporters.graph_exporter import export_graphml, export_turtle
 from gguf_knowledge_extractor.core.exporters.sqlite_exporter import export_sqlite
+from gguf_knowledge_extractor.core.causal_tracer import CausalTracer
+from gguf_knowledge_extractor.core.rome_editor import RomeEditor, EditRequest
+from gguf_knowledge_extractor.core.fingerprint_compare import FingerprintComparator
 
 
 def cmd_extract(args):
@@ -214,6 +218,217 @@ def cmd_web(args):
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
 
 
+# ---------------------------------------------------------------------- #
+# v3 subcommands
+# ---------------------------------------------------------------------- #
+def cmd_trace(args):
+    """v3: Logit-lens causal tracing on fact probes."""
+    import gguf
+    print(f"[trace] GGUF: {args.gguf}")
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    reader = gguf.GGUFReader(args.gguf)
+    # Load fields
+    fields = {}
+    for fname in reader.fields.keys():
+        try:
+            f = reader.get_field(fname)
+            if len(f.types) == 1 and f.types[0] == gguf.GGUFValueType.ARRAY:
+                arr = f.parts[f.data[0]] if f.data else None
+                fields[fname] = arr.tolist() if arr is not None and hasattr(arr, "tolist") else None
+            else:
+                try:
+                    v = f.contents()
+                    if hasattr(v, "tolist"):
+                        fields[fname] = v.tolist()
+                    elif hasattr(v, "item"):
+                        fields[fname] = v.item()
+                    else:
+                        fields[fname] = v
+                except Exception:
+                    fields[fname] = None
+        except Exception:
+            pass
+
+    tracer = CausalTracer(reader, fields, top_k=args.top_k)
+    if not tracer.is_available():
+        print(f"[trace] ERROR: forward pass not available for this GGUF")
+        print(f"[trace] (Need Llama-arch with full attn + MLP tensors)")
+        sys.exit(1)
+
+    # Load fact probes
+    packs = list_default_packs()
+    fact_packs = [p for p in packs if p.category == "facts"]
+    if args.packs:
+        names = {n.strip() for n in args.packs.split(",")}
+        fact_packs = [p for p in fact_packs if p.name in names]
+    if not fact_packs:
+        print(f"[trace] No fact packs found")
+        sys.exit(1)
+
+    facts = []
+    for pack in fact_packs:
+        for probe in pack.probes:
+            facts.append({
+                "probe_id": probe.id,
+                "prompt": probe.prompt,
+                "expected": probe.expected,
+                "domain": pack.domain,
+                "source_pack": pack.name,
+            })
+
+    print(f"[trace] Tracing {len(facts)} facts via logit lens...")
+    report = tracer.trace_facts(facts)
+    print(f"[trace] ✓ Done in {report.stats['elapsed_seconds']:.1f}s")
+    print(f"[trace] Forward pass available: {report.stats['forward_pass_available']}")
+    print(f"[trace] Facts with logit lens: {report.n_with_logit_lens}/{report.n_facts_traced}")
+    print(f"[trace] Correct predictions: {report.n_correct}/{report.n_facts_traced}")
+    if report.avg_first_correct_layer is not None:
+        print(f"[trace] Avg first-correct layer: {report.avg_first_correct_layer:.1f}")
+
+    # Save
+    base = Path(args.gguf).stem
+    json_path = out_dir / f"{base}_causal_trace.json"
+    with open(json_path, "w") as f:
+        json.dump(_to_jsonable_trace(report), f, indent=2, default=str)
+    print(f"[trace] Output: {json_path}")
+
+
+def cmd_edit(args):
+    """v3: ROME-style rank-1 fact editing."""
+    import gguf, json
+    print(f"[edit] GGUF: {args.gguf}")
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load edit requests
+    if args.edits_file:
+        with open(args.edits_file) as f:
+            edits_data = json.load(f)
+        requests = [EditRequest(**e) for e in edits_data]
+    elif args.subject and args.prompt and args.target:
+        requests = [EditRequest(subject=args.subject, prompt=args.prompt, target_object=args.target)]
+    else:
+        print("[edit] ERROR: provide --edits-file OR --subject/--prompt/--target")
+        sys.exit(1)
+
+    print(f"[edit] {len(requests)} edit request(s)")
+
+    reader = gguf.GGUFReader(args.gguf)
+    fields = {}
+    for fname in reader.fields.keys():
+        try:
+            f = reader.get_field(fname)
+            if len(f.types) == 1 and f.types[0] == gguf.GGUFValueType.ARRAY:
+                arr = f.parts[f.data[0]] if f.data else None
+                fields[fname] = arr.tolist() if arr is not None and hasattr(arr, "tolist") else None
+            else:
+                try:
+                    v = f.contents()
+                    if hasattr(v, "tolist"):
+                        fields[fname] = v.tolist()
+                    elif hasattr(v, "item"):
+                        fields[fname] = v.item()
+                    else:
+                        fields[fname] = v
+                except Exception:
+                    fields[fname] = None
+        except Exception:
+            pass
+
+    editor = RomeEditor(reader, fields)
+    if not editor.is_available():
+        print("[edit] ERROR: forward pass not available for this GGUF")
+        sys.exit(1)
+
+    output_gguf = out_dir / f"{Path(args.gguf).stem}_edited.gguf"
+    report = editor.edit_facts(requests, args.gguf, str(output_gguf))
+
+    print(f"\n[edit] ✓ Done in {report.stats['elapsed_seconds']:.1f}s")
+    print(f"[edit] Successful: {report.n_edits_successful}/{report.n_edits_requested}")
+    for e in report.edits:
+        status = "✓" if e.get("edit_successful") else "✗"
+        print(f"  {status} '{e.get('subject','')}' -> '{e.get('target_object','')}' "
+              f"(layer {e.get('edited_layer')}, neuron {e.get('edited_neuron')}) "
+              f"| pre: '{e.get('pre_edit_prediction','')}' → post: '{e.get('post_edit_prediction','')}'")
+    if report.output_gguf_path:
+        print(f"[edit] Modified GGUF: {report.output_gguf_path}")
+
+    # Save report
+    json_path = out_dir / f"{Path(args.gguf).stem}_edit_report.json"
+    with open(json_path, "w") as f:
+        json.dump(_to_jsonable_trace(report), f, indent=2, default=str)
+    print(f"[edit] Report: {json_path}")
+
+
+def cmd_compare(args):
+    """v3: Cross-model fingerprint comparison."""
+    import json
+    reports = args.reports
+    if len(reports) < 2:
+        print("[compare] ERROR: need at least 2 reports to compare")
+        sys.exit(1)
+
+    print(f"[compare] Comparing {len(reports)} attribution reports:")
+    for r in reports:
+        print(f"  - {r}")
+
+    comparator = FingerprintComparator()
+    report = comparator.compare_all(reports)
+
+    print(f"\n[compare] ✓ Done")
+    print(f"[compare] Models: {report.n_models}")
+    print(f"[compare] Pairwise comparisons: {len(report.pairwise)}")
+    print(f"[compare] Identical fingerprints: {report.stats['n_identical_fingerprints']}")
+    print(f"[compare] Strong lineage (>0.7): {report.stats['n_strong_lineage']}")
+
+    print(f"\n=== Pairwise ===")
+    for p in report.pairwise:
+        print(f"\n  {p['model_a']}  vs  {p['model_b']}")
+        print(f"    Fingerprint match: {p['fingerprint_match']}")
+        print(f"    Same arch: {p['same_arch']}")
+        print(f"    Top neuron Jaccard: {p['top_neuron_jaccard']:.3f}")
+        print(f"    Top token Jaccard: {p['top_token_jaccard']:.3f}")
+        print(f"    Concept mastery corr: {p['concept_mastery_correlation']:.3f}")
+        print(f"    Behavioral similarity: {p['behavioral_similarity']:.3f}")
+        print(f"    Lineage score: {p['lineage_score']:.3f}")
+        print(f"    → {p['lineage_hypothesis']}")
+
+    # Save
+    out_path = args.out or "./download/comparison_report.json"
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w") as f:
+        json.dump(_to_jsonable_trace(report), f, indent=2, default=str)
+    print(f"\n[compare] Report saved: {out_path}")
+
+
+def _to_jsonable_trace(obj):
+    """Convert dataclass to JSON-serializable dict."""
+    import numpy as np
+    from dataclasses import asdict
+    if hasattr(obj, "__dataclass_fields__"):
+        obj = asdict(obj)
+    if isinstance(obj, dict):
+        return {str(k): _to_jsonable_trace(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_jsonable_trace(v) for v in obj]
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating,)):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, (np.bool_,)):
+        return bool(obj)
+    if isinstance(obj, bytes):
+        try:
+            return obj.decode("utf-8")
+        except Exception:
+            return str(obj)
+    return obj
+
+
 def main():
     p = argparse.ArgumentParser(prog="gguf-knowledge-extractor", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -264,6 +479,30 @@ def main():
     pw.add_argument("--port", type=int, default=8000)
     pw.add_argument("--log-level", default="info")
     pw.set_defaults(func=cmd_web)
+
+    # v3: trace
+    pt = sub.add_parser("trace", help="v3: Logit-lens causal tracing on fact probes")
+    pt.add_argument("--gguf", required=True)
+    pt.add_argument("--out", default="./download")
+    pt.add_argument("--packs", default="", help="Comma-separated fact pack names (default: all facts)")
+    pt.add_argument("--top-k", type=int, default=10)
+    pt.set_defaults(func=cmd_trace)
+
+    # v3: edit (ROME)
+    ped = sub.add_parser("edit", help="v3: ROME-style rank-1 fact editing")
+    ped.add_argument("--gguf", required=True)
+    ped.add_argument("--out", default="./download")
+    ped.add_argument("--edits-file", help="JSON file with list of {subject, prompt, target_object}")
+    ped.add_argument("--subject", help="Single edit: subject")
+    ped.add_argument("--prompt", help="Single edit: full prompt")
+    ped.add_argument("--target", help="Single edit: target object")
+    ped.set_defaults(func=cmd_edit)
+
+    # v3: compare
+    pcm = sub.add_parser("compare", help="v3: Cross-model fingerprint comparison")
+    pcm.add_argument("reports", nargs="+", help="Two or more *_report.json paths")
+    pcm.add_argument("--out", default="./download/comparison_report.json")
+    pcm.set_defaults(func=cmd_compare)
 
     args = p.parse_args()
     args.func(args)

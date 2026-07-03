@@ -18,6 +18,9 @@ function showView(name) {
 }
 
 $('#nav-extract').onclick = (e) => { e.preventDefault(); showView('extract'); };
+$('#nav-trace').onclick = (e) => { e.preventDefault(); showView('trace'); };
+$('#nav-edit').onclick = (e) => { e.preventDefault(); showView('edit'); initEditView(); };
+$('#nav-compare').onclick = (e) => { e.preventDefault(); showView('compare'); };
 $('#nav-jobs').onclick = (e) => { e.preventDefault(); showView('jobs'); loadJobs(); };
 $('#nav-packs').onclick = (e) => { e.preventDefault(); showView('packs'); loadPacksDetail(); };
 $('#nav-backends').onclick = (e) => { e.preventDefault(); showView('backends'); loadBackendsDetail(); };
@@ -469,3 +472,263 @@ async function loadJobs() {
 // Init
 // ---------------------------------------------------------------- //
 loadPacks();
+
+// ---------------------------------------------------------------- //
+// v3: Causal Trace
+// ---------------------------------------------------------------- //
+let traceFile = null;
+const traceDz = $('#trace-dropzone');
+const traceInput = $('#trace-file-input');
+
+traceDz.onclick = () => traceInput.click();
+traceDz.ondragover = (e) => { e.preventDefault(); traceDz.classList.add('drag-over'); };
+traceDz.ondragleave = () => traceDz.classList.remove('drag-over');
+traceDz.ondrop = (e) => {
+  e.preventDefault();
+  traceDz.classList.remove('drag-over');
+  if (e.dataTransfer.files.length) handleTraceFile(e.dataTransfer.files[0]);
+};
+traceInput.onchange = (e) => { if (e.target.files.length) handleTraceFile(e.target.files[0]); };
+
+function handleTraceFile(file) {
+  if (!file.name.toLowerCase().endsWith('.gguf')) { alert('File must be .gguf'); return; }
+  traceFile = file;
+  $('#trace-selected-file').textContent = `✓ ${file.name} (${(file.size / 1e6).toFixed(2)} MB)`;
+  $('#btn-trace').disabled = false;
+}
+
+$('#btn-trace').onclick = async () => {
+  if (!traceFile) return;
+  const fd = new FormData();
+  fd.append('file', traceFile);
+  fd.append('top_k', $('#trace-top-k').value);
+  $('#btn-trace').disabled = true;
+  $('#btn-trace').textContent = 'Starting...';
+  try {
+    const res = await fetch('/api/trace', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'trace failed to start');
+    showView('job');
+    pollJob(data.job_id);
+  } catch (e) {
+    alert('Failed: ' + e.message);
+    $('#btn-trace').disabled = false;
+    $('#btn-trace').textContent = 'Run causal trace →';
+  }
+};
+
+// ---------------------------------------------------------------- //
+// v3: ROME Edit
+// ---------------------------------------------------------------- //
+let editFile = null;
+let editRequests = [];
+
+const editDz = $('#edit-dropzone');
+const editInput = $('#edit-file-input');
+editDz.onclick = () => editInput.click();
+editDz.ondragover = (e) => { e.preventDefault(); editDz.classList.add('drag-over'); };
+editDz.ondragleave = () => editDz.classList.remove('drag-over');
+editDz.ondrop = (e) => {
+  e.preventDefault();
+  editDz.classList.remove('drag-over');
+  if (e.dataTransfer.files.length) handleEditFile(e.dataTransfer.files[0]);
+};
+editInput.onchange = (e) => { if (e.target.files.length) handleEditFile(e.target.files[0]); };
+
+function handleEditFile(file) {
+  if (!file.name.toLowerCase().endsWith('.gguf')) { alert('File must be .gguf'); return; }
+  editFile = file;
+  $('#edit-selected-file').textContent = `✓ ${file.name} (${(file.size / 1e6).toFixed(2)} MB)`;
+  updateEditButton();
+}
+
+function initEditView() {
+  if (editRequests.length === 0) {
+    editRequests = [{ subject: '', prompt: '', target_object: '' }];
+    renderEdits();
+  }
+}
+
+$('#btn-add-edit').onclick = () => {
+  editRequests.push({ subject: '', prompt: '', target_object: '' });
+  renderEdits();
+};
+
+function renderEdits() {
+  const container = $('#edits-list');
+  container.innerHTML = '';
+  editRequests.forEach((req, idx) => {
+    const div = document.createElement('div');
+    div.style.cssText = 'background:var(--bg-elev);border-radius:8px;padding:14px;margin-bottom:10px;';
+    div.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <strong>Edit #${idx + 1}</strong>
+        ${editRequests.length > 1 ? `<button class="btn-secondary" style="padding:4px 10px;font-size:11px;" data-rm="${idx}">Remove</button>` : ''}
+      </div>
+      <div class="form-row">
+        <label>Subject<input type="text" data-field="subject" data-idx="${idx}" value="${req.subject.replace(/"/g, '&quot;')}" placeholder="e.g. The Eiffel Tower" /></label>
+        <label>Target object<input type="text" data-field="target_object" data-idx="${idx}" value="${req.target_object.replace(/"/g, '&quot;')}" placeholder="e.g. Berlin" /></label>
+      </div>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text-dim);margin-top:8px;">
+        Prompt
+        <input type="text" data-field="prompt" data-idx="${idx}" value="${req.prompt.replace(/"/g, '&quot;')}" placeholder="e.g. The Eiffel Tower is located in the city of" style="font-family:var(--mono);" />
+      </label>
+    `;
+    container.appendChild(div);
+  });
+  // Wire up inputs
+  container.querySelectorAll('input[data-field]').forEach(inp => {
+    inp.oninput = (e) => {
+      const idx = parseInt(e.target.dataset.idx);
+      const field = e.target.dataset.field;
+      editRequests[idx][field] = e.target.value;
+      updateEditButton();
+    };
+  });
+  container.querySelectorAll('button[data-rm]').forEach(btn => {
+    btn.onclick = (e) => {
+      const idx = parseInt(e.target.dataset.rm);
+      editRequests.splice(idx, 1);
+      renderEdits();
+      updateEditButton();
+    };
+  });
+}
+
+function updateEditButton() {
+  const hasFile = editFile !== null;
+  const hasValidEdit = editRequests.some(r => r.subject && r.prompt && r.target_object);
+  $('#btn-edit').disabled = !(hasFile && hasValidEdit);
+}
+
+$('#btn-edit').onclick = async () => {
+  if (!editFile) return;
+  const validEdits = editRequests.filter(r => r.subject && r.prompt && r.target_object);
+  const fd = new FormData();
+  fd.append('file', editFile);
+  fd.append('edits_json', JSON.stringify(validEdits));
+  $('#btn-edit').disabled = true;
+  $('#btn-edit').textContent = 'Starting...';
+  try {
+    const res = await fetch('/api/edit', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'edit failed to start');
+    showView('job');
+    pollJob(data.job_id);
+  } catch (e) {
+    alert('Failed: ' + e.message);
+    $('#btn-edit').disabled = false;
+    $('#btn-edit').textContent = 'Apply ROME edits →';
+  }
+};
+
+// ---------------------------------------------------------------- //
+// v3: Compare
+// ---------------------------------------------------------------- //
+let compareFiles = [];
+const cmpDz = $('#compare-dropzone');
+const cmpInput = $('#compare-file-input');
+cmpDz.onclick = () => cmpInput.click();
+cmpDz.ondragover = (e) => { e.preventDefault(); cmpDz.classList.add('drag-over'); };
+cmpDz.ondragleave = () => cmpDz.classList.remove('drag-over');
+cmpDz.ondrop = (e) => {
+  e.preventDefault();
+  cmpDz.classList.remove('drag-over');
+  for (const f of e.dataTransfer.files) handleCompareFile(f);
+};
+cmpInput.onchange = (e) => { for (const f of e.target.files) handleCompareFile(f); };
+
+function handleCompareFile(file) {
+  if (!file.name.toLowerCase().endsWith('.json')) return;
+  if (compareFiles.find(f => f.name === file.name)) return;
+  compareFiles.push(file);
+  renderCompareFiles();
+}
+
+function renderCompareFiles() {
+  const container = $('#compare-files-list');
+  container.innerHTML = compareFiles.map((f, i) =>
+    `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px;background:var(--bg-elev);border-radius:6px;margin-bottom:6px;">
+      <span style="font-family:var(--mono);font-size:12px;color:var(--accent-2);">📄 ${f.name}</span>
+      <button class="btn-secondary" style="padding:4px 10px;font-size:11px;" data-rm="${i}">Remove</button>
+    </div>`
+  ).join('');
+  container.querySelectorAll('button[data-rm]').forEach(btn => {
+    btn.onclick = (e) => {
+      compareFiles.splice(parseInt(e.target.dataset.rm), 1);
+      renderCompareFiles();
+      $('#btn-compare').disabled = compareFiles.length < 2;
+    };
+  });
+  $('#btn-compare').disabled = compareFiles.length < 2;
+}
+
+$('#btn-compare').onclick = async () => {
+  if (compareFiles.length < 2) return;
+  const fd = new FormData();
+  for (const f of compareFiles) fd.append('reports', f, f.name);
+  $('#btn-compare').disabled = true;
+  $('#btn-compare').textContent = 'Comparing...';
+  try {
+    const res = await fetch('/api/compare', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'compare failed');
+    // Render immediately (compare is synchronous)
+    showView('job');
+    renderCompareResult(data.report);
+  } catch (e) {
+    alert('Failed: ' + e.message);
+    $('#btn-compare').disabled = false;
+    $('#btn-compare').textContent = 'Compare models →';
+  }
+};
+
+function renderCompareResult(report) {
+  const c = $('#job-content');
+  let html = `<div class="card">
+    <div class="job-header">
+      <div>
+        <h2 style="margin-bottom:4px;">Cross-Model Comparison</h2>
+        <p class="hint">${report.n_models} models compared · ${report.pairwise.length} pairwise comparisons</p>
+      </div>
+      <span class="job-status completed">completed</span>
+    </div>`;
+
+  // Stats
+  html += `<div class="stats-grid">
+    <div class="stat-block"><div class="stat-value">${report.n_models}</div><div class="stat-label">Models</div></div>
+    <div class="stat-block"><div class="stat-value">${report.pairwise.length}</div><div class="stat-label">Comparisons</div></div>
+    <div class="stat-block"><div class="stat-value">${report.stats.n_identical_fingerprints}</div><div class="stat-label">Identical fingerprints</div></div>
+    <div class="stat-block"><div class="stat-value">${report.stats.n_strong_lineage}</div><div class="stat-label">Strong lineage</div></div>
+  </div>`;
+
+  // Pairwise
+  html += `<div class="section-h3">Pairwise Comparisons</div>`;
+  for (const p of report.pairwise) {
+    const scoreColor = p.lineage_score > 0.7 ? 'var(--success)' : p.lineage_score > 0.4 ? 'var(--warn)' : 'var(--danger)';
+    html += `<div style="background:var(--bg-elev);border-radius:8px;padding:14px;margin-bottom:12px;border-left:4px solid ${scoreColor};">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <strong>${p.model_a}  ↔  ${p.model_b}</strong>
+        <span style="font-family:var(--mono);font-size:18px;color:${scoreColor};font-weight:700;">${p.lineage_score.toFixed(3)}</span>
+      </div>
+      <div style="font-size:12px;color:var(--text);margin-bottom:8px;">${p.lineage_hypothesis}</div>
+      <table style="font-size:11px;">
+        <tr><td>Fingerprint match</td><td>${p.fingerprint_match ? '✓ IDENTICAL' : '✗ different'}</td></tr>
+        <tr><td>Same architecture</td><td>${p.same_arch ? '✓' : '✗'}</td></tr>
+        <tr><td>Top neuron Jaccard</td><td>${p.top_neuron_jaccard.toFixed(3)}</td></tr>
+        <tr><td>Top token Jaccard</td><td>${p.top_token_jaccard.toFixed(3)}</td></tr>
+        <tr><td>Concept mastery correlation</td><td>${p.concept_mastery_correlation.toFixed(3)}</td></tr>
+        <tr><td>Behavioral similarity</td><td>${p.behavioral_similarity.toFixed(3)}</td></tr>
+      </table>
+    </div>`;
+  }
+
+  // Download
+  html += `<div class="section-h3">Download</div>`;
+  html += `<div class="download-grid">
+    <a class="download-btn" href="/api/jobs/${report.job_id || ''}/download/json"><span class="icon">📄</span><span class="label">JSON</span><span class="ext">.json</span></a>
+  </div>`;
+
+  html += `</div>`;
+  c.innerHTML = html;
+}

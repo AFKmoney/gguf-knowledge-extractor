@@ -101,7 +101,9 @@ def make_test_gguf(out_path, vocab_size=64, embed_dim=32, n_layers=2):
     # ---- Header ----
     buf.extend(struct.pack("<I", GGUF_MAGIC))
     buf.extend(struct.pack("<I", GGUF_VERSION))
-    n_tensors = 1 + (6 * n_layers)  # token_embd + per layer: attn_q/k/v/output, ffn_up, ffn_down
+    # Tensors per layer: attn_norm, attn_q, attn_k, attn_v, attn_output, ffn_norm, ffn_gate, ffn_up, ffn_down = 9
+    # Plus: token_embd, output_norm, output = 3
+    n_tensors = 3 + (9 * n_layers)
     buf.extend(struct.pack("<Q", n_tensors))  # tensor_count
     n_kv = 14  # 12 scalars + 2 arrays (tokens + scores)
     buf.extend(struct.pack("<Q", n_kv))  # kv_count
@@ -122,6 +124,11 @@ def make_test_gguf(out_path, vocab_size=64, embed_dim=32, n_layers=2):
 
     # Tokenizer
     tokens = [f"<tok_{i}>" for i in range(vocab_size)]
+    # Add some real-word tokens for testing tokenization
+    real_tokens = [" the", " capital", " of", " France", " Paris", " Japan", " Tokyo", " is", " what", " city", " name", " just", " reply", " with"]
+    for i, t in enumerate(real_tokens):
+        if i < vocab_size:
+            tokens[i] = t
     write_array(buf, "tokenizer.ggml.tokens", GGUF_TYPE_STRING, tokens)
     write_array(buf, "tokenizer.ggml.scores", GGUF_TYPE_FLOAT32, [0.0] * vocab_size)
 
@@ -130,14 +137,22 @@ def make_test_gguf(out_path, vocab_size=64, embed_dim=32, n_layers=2):
     tensor_names_dims = []
     tensor_names_dims.append(("token_embd.weight", [vocab_size, embed_dim], GGML_TYPE_F32))
     for layer in range(n_layers):
-        # Attention: Q, K, V all [embed_dim, embed_dim] (n_heads * head_dim = embed_dim)
+        # Norms (1D vectors of length embed_dim)
+        tensor_names_dims.append((f"blk.{layer}.attn_norm.weight", [embed_dim], GGML_TYPE_F32))
+        # Attention: Q, K, V all [embed_dim, embed_dim]
         tensor_names_dims.append((f"blk.{layer}.attn_q.weight", [embed_dim, embed_dim], GGML_TYPE_F16))
         tensor_names_dims.append((f"blk.{layer}.attn_k.weight", [embed_dim, embed_dim], GGML_TYPE_F16))
         tensor_names_dims.append((f"blk.{layer}.attn_v.weight", [embed_dim, embed_dim], GGML_TYPE_F16))
         tensor_names_dims.append((f"blk.{layer}.attn_output.weight", [embed_dim, embed_dim], GGML_TYPE_F16))
-        # FFN
+        # FFN norm
+        tensor_names_dims.append((f"blk.{layer}.ffn_norm.weight", [embed_dim], GGML_TYPE_F32))
+        # FFN (gated): gate, up, down
+        tensor_names_dims.append((f"blk.{layer}.ffn_gate.weight", [embed_dim * 4, embed_dim], GGML_TYPE_F16))
         tensor_names_dims.append((f"blk.{layer}.ffn_up.weight", [embed_dim * 4, embed_dim], GGML_TYPE_F16))
         tensor_names_dims.append((f"blk.{layer}.ffn_down.weight", [embed_dim, embed_dim * 4], GGML_TYPE_F16))
+    # Final norm + output (lm_head)
+    tensor_names_dims.append(("output_norm.weight", [embed_dim], GGML_TYPE_F32))
+    tensor_names_dims.append(("output.weight", [vocab_size, embed_dim], GGML_TYPE_F32))
 
     def info_size(name, n_dims):
         name_bytes = len(name.encode("utf-8"))
