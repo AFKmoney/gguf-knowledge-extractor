@@ -163,6 +163,72 @@ CREATE TABLE IF NOT EXISTS calibration (
 CREATE INDEX IF NOT EXISTS idx_probes_model ON probes(model_id);
 CREATE INDEX IF NOT EXISTS idx_facts_model ON facts(model_id);
 CREATE INDEX IF NOT EXISTS idx_tensor_model ON tensor_stats(model_id);
+
+-- v2: Attribution tables
+CREATE TABLE IF NOT EXISTS mlp_layers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_id INTEGER REFERENCES models(id),
+    layer_index INTEGER,
+    hidden_dim INTEGER,
+    embed_dim INTEGER,
+    is_gated INTEGER,
+    n_neurons INTEGER,
+    layer_strength REAL,
+    concentration REAL
+);
+
+CREATE TABLE IF NOT EXISTS mlp_neurons (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_id INTEGER REFERENCES models(id),
+    layer_index INTEGER,
+    neuron_index INTEGER,
+    key_norm REAL,
+    value_norm REAL,
+    memory_strength REAL,
+    top_activating_tokens_json TEXT,
+    top_output_tokens_json TEXT
+);
+
+CREATE TABLE IF NOT EXISTS attention_heads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_id INTEGER REFERENCES models(id),
+    layer_index INTEGER,
+    head_index INTEGER,
+    head_dim INTEGER,
+    q_norm REAL,
+    v_norm REAL,
+    o_norm REAL,
+    copy_score REAL,
+    induction_score REAL,
+    specialization REAL,
+    top_singular_value REAL
+);
+
+CREATE TABLE IF NOT EXISTS fact_attributions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_id INTEGER REFERENCES models(id),
+    probe_id TEXT,
+    prompt TEXT,
+    expected TEXT,
+    model_answer TEXT,
+    correct INTEGER,
+    attributed_layer INTEGER,
+    attributed_neuron INTEGER,
+    attribution_confidence REAL,
+    method TEXT
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_fingerprints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_id INTEGER REFERENCES models(id),
+    fingerprint TEXT,
+    n_layers_analyzed_mlp INTEGER,
+    n_layers_analyzed_attn INTEGER,
+    n_heads_total INTEGER,
+    n_global_top_neurons INTEGER,
+    strongest_layer INTEGER,
+    most_concentrated_layer INTEGER
+);
 """
 
 
@@ -340,6 +406,94 @@ def export_sqlite(report: KnowledgeReport, out_path: Union[str, Path]) -> str:
             json.dumps(cal.get("hallucination_details",[]), default=str)[:65000],
         ),
     )
+
+    # v2: Attribution
+    attr = report.attribution if isinstance(report.attribution, dict) else {}
+    if attr:
+        # Fingerprint
+        brief = attr.get("fingerprint_brief", {}) or {}
+        cur.execute(
+            """INSERT INTO knowledge_fingerprints (
+                model_id, fingerprint, n_layers_analyzed_mlp,
+                n_layers_analyzed_attn, n_heads_total, n_global_top_neurons,
+                strongest_layer, most_concentrated_layer
+            ) VALUES (?,?,?,?,?,?,?,?)""",
+            (
+                model_id, attr.get("knowledge_fingerprint",""),
+                (attr.get("stats",{}) or {}).get("n_layers_analyzed_mlp",0),
+                (attr.get("stats",{}) or {}).get("n_layers_analyzed_attn",0),
+                (attr.get("stats",{}) or {}).get("n_heads_total",0),
+                (attr.get("stats",{}) or {}).get("n_global_top_neurons",0),
+                brief.get("strongest_layer"),
+                brief.get("most_concentrated_layer"),
+            ),
+        )
+
+        # MLP layers
+        mlp = attr.get("mlp_analysis", {}) or {}
+        for L in mlp.get("layers", []) or []:
+            cur.execute(
+                """INSERT INTO mlp_layers (
+                    model_id, layer_index, hidden_dim, embed_dim, is_gated,
+                    n_neurons, layer_strength, concentration
+                ) VALUES (?,?,?,?,?,?,?,?)""",
+                (
+                    model_id, L.get("layer"), L.get("hidden_dim"),
+                    L.get("embed_dim"), 1 if L.get("is_gated") else 0,
+                    L.get("n_neurons"), L.get("layer_strength",0),
+                    L.get("concentration",0),
+                ),
+            )
+            for n in L.get("top_neurons", []) or []:
+                cur.execute(
+                    """INSERT INTO mlp_neurons (
+                        model_id, layer_index, neuron_index, key_norm, value_norm,
+                        memory_strength, top_activating_tokens_json, top_output_tokens_json
+                    ) VALUES (?,?,?,?,?,?,?,?)""",
+                    (
+                        model_id, L.get("layer"), n.get("neuron_index"),
+                        n.get("key_norm",0), n.get("value_norm",0),
+                        n.get("memory_strength",0),
+                        json.dumps(n.get("top_activating_tokens",[]), default=str)[:65000],
+                        json.dumps(n.get("top_output_tokens",[]), default=str)[:65000],
+                    ),
+                )
+
+        # Attention heads
+        attn = attr.get("attention_analysis", {}) or {}
+        for L in attn.get("layers", []) or []:
+            for h in L.get("heads", []) or []:
+                cur.execute(
+                    """INSERT INTO attention_heads (
+                        model_id, layer_index, head_index, head_dim, q_norm,
+                        v_norm, o_norm, copy_score, induction_score,
+                        specialization, top_singular_value
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        model_id, h.get("layer"), h.get("head_index"),
+                        h.get("head_dim"), h.get("q_norm",0),
+                        h.get("v_norm",0), h.get("o_norm",0),
+                        h.get("copy_score",0), h.get("induction_score",0),
+                        h.get("specialization",0), h.get("top_singular_value",0),
+                    ),
+                )
+
+        # Fact attributions
+        for f in attr.get("fact_attributions", []) or []:
+            cur.execute(
+                """INSERT INTO fact_attributions (
+                    model_id, probe_id, prompt, expected, model_answer,
+                    correct, attributed_layer, attributed_neuron,
+                    attribution_confidence, method
+                ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    model_id, f.get("probe_id"), f.get("prompt"),
+                    f.get("expected"), f.get("model_answer"),
+                    1 if f.get("correct") else 0,
+                    f.get("attributed_layer"), f.get("attributed_neuron"),
+                    f.get("attribution_confidence",0), f.get("method"),
+                ),
+            )
 
     conn.commit()
     conn.close()

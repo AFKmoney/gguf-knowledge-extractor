@@ -45,6 +45,13 @@
           <label><input type="checkbox" id="opt-metadata" checked /> Model metadata</label>
           <label><input type="checkbox" id="opt-weights" checked /> Weight inspection (mechanistic)</label>
           <label><input type="checkbox" id="opt-probes" checked /> Inference probes (facts/concepts/behavioral)</label>
+          <label><input type="checkbox" id="opt-attribution" checked /> <strong>v2: Knowledge attribution</strong> <span class="hint">(ROME/MEMIT MLP decomposition)</span></label>
+        </div>
+        <div class="form-row" style="margin-top:10px;">
+          <label>
+            Attribution top-K per layer
+            <input type="number" id="opt-attribution-top-k" value="20" min="5" max="100" />
+          </label>
         </div>
       </div>
 

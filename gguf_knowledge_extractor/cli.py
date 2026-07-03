@@ -51,6 +51,8 @@ def cmd_extract(args):
             print(f"[extract] ERROR: no packs matched '{args.packs}'")
             sys.exit(1)
     print(f"[extract] Probe packs: {', '.join(p.name for p in packs)} ({sum(len(p) for p in packs)} probes total)")
+    if args.attribution:
+        print(f"[extract] Attribution: ENABLED (top {args.attribution_top_k} neurons per layer)")
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -75,6 +77,8 @@ def cmd_extract(args):
         do_metadata=True,
         do_weights=not args.no_weights,
         do_probes=not args.no_probes,
+        do_attribution=args.attribution,
+        attribution_top_k=args.attribution_top_k,
     )
 
     base = Path(args.gguf).stem
@@ -88,6 +92,12 @@ def cmd_extract(args):
     print(f"[extract] ✓ Done in {report.stats['total_elapsed_seconds']:.1f}s")
     print(f"[extract] Backend used: {report.stats.get('backend_used')}")
     print(f"[extract] Probes run: {report.stats['n_probes']}  |  passed: {report.stats['n_probes_passed']}")
+    if args.attribution and report.attribution:
+        fp = report.attribution.get("knowledge_fingerprint","")[:16]
+        n_layers = (report.attribution.get("stats",{}) or {}).get("n_layers_analyzed_mlp",0)
+        n_neurons = (report.attribution.get("stats",{}) or {}).get("n_global_top_neurons",0)
+        print(f"[extract] Knowledge fingerprint: {fp}...")
+        print(f"[extract] MLP layers analyzed: {n_layers}  |  top neurons extracted: {n_neurons}")
     print(f"[extract] Outputs:")
     print(f"           JSON     : {json_path}")
     print(f"           Markdown : {md_path}")
@@ -119,6 +129,58 @@ def cmd_inspect(args):
     print(f"[inspect] Outputs:")
     print(f"           JSON     : {json_path}")
     print(f"           Markdown : {md_path}")
+
+
+def cmd_attribute(args):
+    """Weights + attribution only — no inference required."""
+    print(f"[attribute] GGUF: {args.gguf}")
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def progress(msg, cur, total):
+        if total > 0:
+            print(f"[attribute] [{cur}/{total}] {msg}")
+        else:
+            print(f"[attribute] {msg}")
+
+    extractor = KnowledgeExtractor(
+        gguf_path=args.gguf,
+        prefer_backend="auto",
+        progress_cb=progress,
+    )
+    report = extractor.extract(
+        packs=[],
+        do_metadata=True,
+        do_weights=True,
+        do_probes=False,
+        do_attribution=True,
+        attribution_top_k=args.top_k,
+    )
+
+    base = Path(args.gguf).stem
+    json_path = export_json(report, out_dir / f"{base}_attribution.json")
+    md_path = export_markdown(report, out_dir / f"{base}_attribution.md")
+    graphml_path = export_graphml(report, out_dir / f"{base}_attribution.graphml")
+    ttl_path = export_turtle(report, out_dir / f"{base}_attribution.ttl")
+    db_path = export_sqlite(report, out_dir / f"{base}_attribution.db")
+
+    print()
+    print(f"[attribute] ✓ Done in {report.stats['total_elapsed_seconds']:.1f}s")
+    if report.attribution:
+        fp = report.attribution.get("knowledge_fingerprint","")
+        n_layers = (report.attribution.get("stats",{}) or {}).get("n_layers_analyzed_mlp",0)
+        n_neurons = (report.attribution.get("stats",{}) or {}).get("n_global_top_neurons",0)
+        n_heads = (report.attribution.get("stats",{}) or {}).get("n_heads_total",0)
+        print(f"[attribute] Knowledge fingerprint: {fp}")
+        print(f"[attribute] MLP layers analyzed: {n_layers}")
+        print(f"[attribute] Attention heads analyzed: {n_heads}")
+        print(f"[attribute] Global top neurons extracted: {n_neurons}")
+    print(f"[attribute] Outputs:")
+    print(f"           JSON     : {json_path}")
+    print(f"           Markdown : {md_path}")
+    print(f"           GraphML  : {graphml_path}")
+    print(f"           Turtle   : {ttl_path}")
+    print(f"           SQLite   : {db_path}")
 
 
 def cmd_packs(args):
@@ -164,6 +226,10 @@ def main():
     pe.add_argument("--packs", default="all", help="Comma-separated pack names, or 'all'")
     pe.add_argument("--no-weights", action="store_true", help="Skip weight inspection")
     pe.add_argument("--no-probes", action="store_true", help="Skip inference probes")
+    pe.add_argument("--attribution", action="store_true",
+                    help="Run v2 knowledge attribution (ROME/MEMIT-style MLP decomposition)")
+    pe.add_argument("--attribution-top-k", type=int, default=20,
+                    help="Top-K neurons per layer for attribution (default 20)")
     pe.add_argument("--server-url", default="http://127.0.0.1:8080")
     pe.add_argument("--prefer", default="auto", choices=["auto", "server", "python"])
     pe.add_argument("--n-ctx", type=int, default=4096)
@@ -175,6 +241,13 @@ def main():
     pi.add_argument("--gguf", required=True)
     pi.add_argument("--out", default="./download")
     pi.set_defaults(func=cmd_inspect)
+
+    # attribute (v2)
+    pa = sub.add_parser("attribute", help="v2: ROME/MEMIT-style knowledge attribution (no inference required)")
+    pa.add_argument("--gguf", required=True)
+    pa.add_argument("--out", default="./download")
+    pa.add_argument("--top-k", type=int, default=20, help="Top-K neurons per layer")
+    pa.set_defaults(func=cmd_attribute)
 
     # packs
     pp = sub.add_parser("packs", help="List available probe packs")

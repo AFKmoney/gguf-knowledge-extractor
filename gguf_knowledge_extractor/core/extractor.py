@@ -25,6 +25,7 @@ from .inference.base import InferenceBackend, AutoBackend, GenerationResult
 from .probes.base import (
     Probe, ProbePack, evaluate_probe, load_probe_packs, list_default_packs
 )
+from .knowledge_attribution import KnowledgeAttributor, KnowledgeAttributionReport
 
 
 # ---------------------------------------------------------------------- #
@@ -90,6 +91,9 @@ class KnowledgeReport:
     concepts: List[Dict[str, Any]]         # concept -> mastery level
     behavioral_profile: Dict[str, Any]     # refusal rate, persona, biases detected
     calibration: Dict[str, Any]            # epistemic calibration metrics
+
+    # v2: Knowledge attribution (ROME/MEMIT-style)
+    attribution: Dict[str, Any] = field(default_factory=dict)
 
     # Stats
     stats: Dict[str, Any] = field(default_factory=dict)
@@ -477,6 +481,41 @@ class KnowledgeExtractor:
         return out
 
     # ------------------------------------------------------------------ #
+    # Stage 5: knowledge attribution (v2 — ROME/MEMIT-style)
+    # ------------------------------------------------------------------ #
+    def attribute_knowledge(
+        self,
+        fact_results: List[Dict[str, Any]],
+        top_k_per_layer: int = 20,
+        top_k_tokens: int = 10,
+    ) -> Dict[str, Any]:
+        """Run the v2 attribution pipeline: MLP decomposition + attention
+        analysis + per-fact attribution."""
+        if self._reader is None:
+            self.parse_metadata()
+
+        tokens = []
+        try:
+            tok_field = self._parser.fields.get("tokenizer.ggml.tokens")
+            if tok_field and isinstance(tok_field, list):
+                tokens = tok_field
+            elif tok_field:
+                tokens = list(tok_field) if hasattr(tok_field, "__iter__") else []
+        except Exception:
+            pass
+
+        attributor = KnowledgeAttributor(
+            reader=self._reader,
+            tokens=tokens,
+            backend=self.backend,
+            top_k_per_layer=top_k_per_layer,
+            top_k_tokens=top_k_tokens,
+            progress_cb=self.progress_cb,
+        )
+        report = attributor.attribute(fact_results=fact_results)
+        return _to_jsonable(asdict(report))
+
+    # ------------------------------------------------------------------ #
     # Full pipeline
     # ------------------------------------------------------------------ #
     def extract(
@@ -485,6 +524,8 @@ class KnowledgeExtractor:
         do_metadata: bool = True,
         do_weights: bool = True,
         do_probes: bool = True,
+        do_attribution: bool = False,
+        attribution_top_k: int = 20,
     ) -> KnowledgeReport:
         """Run the full pipeline. Returns a KnowledgeReport."""
         t0 = time.time()
@@ -502,6 +543,17 @@ class KnowledgeExtractor:
 
         aggregated = self.aggregate(probe_results)
 
+        # v2: attribution
+        attribution_dict: Dict[str, Any] = {}
+        if do_attribution:
+            self.progress_cb("Running knowledge attribution (v2)", 3, 4)
+            # Pass facts as plain dicts
+            fact_dicts = [_to_jsonable(asdict(r)) for r in probe_results if r.pack_category == "facts"]
+            attribution_dict = self.attribute_knowledge(
+                fact_results=fact_dicts,
+                top_k_per_layer=attribution_top_k,
+            )
+
         elapsed = time.time() - t0
         report = KnowledgeReport(
             gguf_path=self.gguf_path,
@@ -516,6 +568,7 @@ class KnowledgeExtractor:
             concepts=aggregated["concepts"],
             behavioral_profile=aggregated["behavioral_profile"],
             calibration=aggregated["calibration"],
+            attribution=attribution_dict,
             stats={
                 "total_elapsed_seconds": elapsed,
                 "n_packs": len(packs),
@@ -528,10 +581,12 @@ class KnowledgeExtractor:
                     "metadata": do_metadata,
                     "weights": do_weights,
                     "probes": do_probes,
+                    "attribution": do_attribution,
                 },
             },
         )
-        self.progress_cb("Extraction complete", 3, 3)
+        final_total = 4 if do_attribution else 3
+        self.progress_cb("Extraction complete", final_total, final_total)
         return report
 
 

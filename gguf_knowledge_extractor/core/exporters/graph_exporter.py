@@ -105,6 +105,59 @@ def export_graphml(report: KnowledgeReport, out_path: Union[str, Path]) -> str:
         G.add_node(lnode, label=f"Layer {ls.get('layer_index',0)}", type="layer")
         G.add_edge(model_id, lnode, relation="has_layer")
 
+    # v2: Attribution nodes
+    attr = report.attribution if isinstance(report.attribution, dict) else {}
+    if attr:
+        # Fingerprint node
+        fp = attr.get("knowledge_fingerprint","")
+        if fp:
+            fp_node = f"fingerprint:{report.gguf_filename}"
+            G.add_node(fp_node, label="Knowledge Fingerprint", type="fingerprint",
+                       fingerprint=fp[:32],
+                       n_layers_analyzed=(attr.get("stats",{}) or {}).get("n_layers_analyzed_mlp",0))
+            G.add_edge(model_id, fp_node, relation="has_fingerprint")
+
+        # Top memory neurons
+        mlp = attr.get("mlp_analysis", {}) or {}
+        for n in (mlp.get("global_top_neurons", []) or [])[:30]:
+            nnode = f"neuron:L{n.get('layer','?')}_N{n.get('neuron_index','?')}"
+            top_tokens = n.get("top_activating_tokens", []) or []
+            top_tok = top_tokens[0][0] if top_tokens and isinstance(top_tokens[0], list) else ""
+            G.add_node(nnode, label=f"Neuron L{n.get('layer','?')}:{n.get('neuron_index','?')}",
+                       type="neuron",
+                       memory_strength=n.get("memory_strength",0),
+                       top_activating_token=str(top_tok)[:30])
+            lnode = f"layer:{n.get('layer',0)}"
+            if not G.has_node(lnode):
+                G.add_node(lnode, label=f"Layer {n.get('layer',0)}", type="layer")
+                G.add_edge(model_id, lnode, relation="has_layer")
+            G.add_edge(lnode, nnode, relation="contains_neuron")
+
+        # Fact attributions
+        for fa in attr.get("fact_attributions", []) or []:
+            if fa.get("attributed_layer") is None:
+                continue
+            attr_node = f"attribution:{fa.get('probe_id','')}"
+            G.add_node(attr_node, label=f"Attribution: {fa.get('probe_id','')}",
+                       type="attribution",
+                       layer=fa.get("attributed_layer"),
+                       neuron=fa.get("attributed_neuron"),
+                       confidence=fa.get("attribution_confidence",0),
+                       method=fa.get("method",""))
+            fact_node = f"fact:{fa.get('probe_id','')}"
+            if G.has_node(fact_node):
+                G.add_edge(fact_node, attr_node, relation="attributed_by")
+            nnode = f"neuron:L{fa.get('attributed_layer','?')}_N{fa.get('attributed_neuron','?')}"
+            if not G.has_node(nnode):
+                G.add_node(nnode, label=f"Neuron L{fa.get('attributed_layer','?')}:{fa.get('attributed_neuron','?')}",
+                           type="neuron")
+                lnode = f"layer:{fa.get('attributed_layer',0)}"
+                if not G.has_node(lnode):
+                    G.add_node(lnode, label=f"Layer {fa.get('attributed_layer',0)}", type="layer")
+                    G.add_edge(model_id, lnode, relation="has_layer")
+                G.add_edge(lnode, nnode, relation="contains_neuron")
+            G.add_edge(attr_node, nnode, relation="located_at")
+
     nx.write_graphml(G, out_path)
     return str(out_path)
 

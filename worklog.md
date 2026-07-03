@@ -3,30 +3,44 @@
 ---
 Task ID: 1
 Agent: GLM (main agent)
-Task: Build a software tool that extracts all knowledge from a GGUF model file without retraining. Hybrid approach (weight inspection + inference probing), local web UI, all output formats (JSON/Markdown/Knowledge Graph/SQLite), YAML-configurable probe packs, support both llama.cpp server and llama-cpp-python backends.
+Task: Build v1 — extract all knowledge from a GGUF file without retraining. Hybrid (weight inspection + inference probing), local web UI, all 5 output formats, YAML probe packs, both backends supported.
 
 Work Log:
-- Asked the user 8 clarifying questions covering extraction goal, technique, interface, output formats, runtime, probe scope, ship speed, and free-text remarks. User selected: Concepts & skills + "all of it" in remarks, Hybrid, Local web UI, all 4 output formats, Both backends, User-configurable (YAML), Full v1.
-- Installed Python dependencies (gguf, fastapi, uvicorn, pydantic, pyyaml, jinja2, networkx, httpx). Attempted llama-cpp-python install but it timed out (compilation required) — designed graceful fallback.
-- Created project structure under /home/z/my-project/gguf_knowledge_extractor/ with core/, web/, probe_packs/, scripts/.
-- Built GGUFParser class wrapping gguf.GGUFReader, exposing structured metadata (arch, vocab, layers, quantization, tokenizer, tensors).
-- Built WeightInspector computing per-tensor stats (mean/std/norm/sparsity/outliers), embedding-space analysis (centroid norm, pairwise cosine, outlier tokens), layer grouping, and capacity estimate (bits/tokens/words per parameter).
-- Built inference engine abstraction: ServerBackend (HTTP, OpenAI-compatible), PythonBackend (llama-cpp-python in-process), AutoBackend (auto-select with fallback). All gracefully degrade when unavailable.
-- Built YAML-based probe pack system with 8 default packs (94 probes total) covering facts (geography/science/history), concepts (programming/domains), behavioral (refusals/biases), and calibration (hallucination/math/reasoning).
-- Built KnowledgeExtractor orchestrator that runs the 3-stage pipeline (parse → inspect → probe) and aggregates results into facts, concepts, behavioral_profile, and calibration structures.
-- Built 4 exporters: JSON (full report), Markdown (human-readable), GraphML (NetworkX graph), RDF/Turtle (semantic triples), SQLite (9-table relational schema).
-- Built FastAPI web UI with dark-mode frontend (HTML/CSS/JS) for drag-and-drop GGUF upload, pack selection, backend configuration, live progress polling, and 5-format download buttons.
-- Wrote CLI entry point with subcommands: extract, inspect (weights-only), packs, backends, web.
-- Created test GGUF generator (scripts/make_test_gguf.py) that builds a tiny synthetic llama-arch GGUF with F32 embeddings + F16 layer weights for validation.
-- Debugged and fixed: tensor shape reversal (GGUF stores C-order, no reversal needed), quantization inference for mixed-precision models, embedding analysis dimension order.
-- End-to-end validated: launched web UI, submitted test GGUF via /api/extract, verified all 5 output formats download correctly with proper content (JSON 36KB, MD 6KB, GraphML 10KB, Turtle 6KB, SQLite 65KB with all 9 tables populated).
-- Verified probes are correctly marked "skipped" with reason "no_backend" when no inference engine is available (graceful degradation).
+- Asked user 8 clarifying questions; user selected: Concepts & skills + "all of it" in remarks, Hybrid, Local web UI, all 4 output formats, Both backends, User-configurable (YAML), Full v1.
+- Installed Python deps (gguf, fastapi, uvicorn, pydantic, pyyaml, jinja2, networkx, httpx). llama-cpp-python timed out (compilation) — designed graceful fallback.
+- Built GGUFParser (gguf-py wrapper), WeightInspector (numpy stats + embedding analysis + capacity estimate).
+- Built inference engine: ServerBackend (HTTP) + PythonBackend (llama-cpp-python) + AutoBackend (fallback).
+- Built 8 YAML probe packs (94 probes total): facts (geography/science/history), concepts (programming/domains), behavioral (refusals/biases), calibration.
+- Built KnowledgeExtractor orchestrator, 4 exporters (JSON, Markdown, GraphML+Turtle, SQLite 9-table schema), FastAPI web UI with drag-drop frontend, CLI with 5 subcommands.
+- Built test GGUF generator (synthetic llama-arch with F32 emb + F16 layers).
+- Debugged: tensor shape reversal (GGUF stores C-order, no reversal), quantization inference for mixed-precision, embedding analysis dim order.
+- End-to-end validated: web UI submits, all 5 outputs produced, all formats download correctly.
 
 Stage Summary:
-- Delivered a working v1.0.0 of the GGUF Knowledge Extractor at /home/z/my-project/gguf_knowledge_extractor/
-- All requested features implemented: hybrid extraction, web UI, 5 output formats, YAML probe packs, both backends supported, user-configurable scope
-- Tested end-to-end with synthetic GGUF; all exporters produce valid output
-- Project structure: 13 Python source files (~2500 LOC), 8 YAML probe packs (94 probes), 1 frontend (HTML/CSS/JS)
-- CLI: `python gguf_knowledge_extractor/cli.py extract --gguf model.gguf`
-- Web UI: `python scripts/start_web_ui.py 8000` → http://127.0.0.1:8000
-- README.md documents architecture, usage, probe pack authoring, and limitations
+- Delivered working v1.0.0 with all requested features. 13 Python files (~2500 LOC), 8 YAML probe packs, full web UI.
+
+---
+Task ID: 2 (v2 upgrade)
+Agent: GLM (main agent)
+Task: Build v2 — ROME/MEMIT-style direct knowledge attribution: MLP memory decomposition, attention head analysis, per-fact attribution, knowledge fingerprint.
+
+Work Log:
+- Built core/mlp_analyzer.py: For each transformer block, decomposes the MLP into "memory neurons" (key × value rank-1 components). For each top-K neuron, finds top-K vocabulary tokens that activate it (via embedding_matrix @ key_vector) and top-K tokens whose embedding is most aligned with the value vector (cosine similarity). Computes memory strength = ||key|| × ||value|| per neuron, layer strength, and concentration.
+- Built core/attention_analyzer.py: For each attention head, computes copy_score (how close V·O is to identity), induction_score (low-rank Q·Qᵀ via SVD entropy), specialization (SVD concentration), top singular value. Detects copy heads and induction heads per Anthropic's interpretability heuristics.
+- Built core/knowledge_attribution.py: Orchestrates MLP + attention analysis. Produces per-fact attribution via weight-only heuristic (finds the layer+neuron whose key vector is most strongly activated by tokens in the prompt). Computes a SHA-256 knowledge fingerprint from the global top-50 neurons.
+- Updated core/extractor.py: Added `do_attribution` parameter to extract() pipeline. New stage 5 runs the attributor after probes complete. KnowledgeReport dataclass gets new `attribution` field.
+- Updated core/exporters/markdown_exporter.py: New Section 8 "Knowledge Attribution (v2)" with fingerprint banner, per-layer MLP memory map, top copy/induction heads tables, per-fact attribution table.
+- Updated core/exporters/sqlite_exporter.py: Added 5 new tables: mlp_layers, mlp_neurons, attention_heads, fact_attributions, knowledge_fingerprints. Total now 14 tables.
+- Updated core/exporters/graph_exporter.py: Added attribution nodes (fingerprint, neurons, attributions) and edges (has_fingerprint, contains_neuron, attributed_by, located_at) to both GraphML and RDF/Turtle outputs.
+- Updated gguf_knowledge_extractor/cli.py: Added --attribution and --attribution-top-k flags to extract subcommand. Added new `attribute` subcommand that runs weights+attribution only (no inference needed).
+- Updated web/server.py + web/static/{index.html,app.js}: New "v2: Knowledge attribution" checkbox in extract form, new attribution_top_k field, server passes both to background worker. Job view renders full attribution visualization: fingerprint banner, stats grid, top 5 neurons table, per-layer MLP memory map, top copy/induction heads tables, per-fact attribution table.
+- Updated scripts/make_test_gguf.py: Now generates a complete transformer block with attn_q, attn_k, attn_v, attn_output, ffn_up, ffn_down per layer (was previously missing attn_k/v/output). Added tokenizer scores array.
+- Tested end-to-end with synthetic GGUF: 3 MLP layers analyzed, 30 top neurons extracted (10/layer), 6 attention heads analyzed, 15 facts attributed (weight_only method since no inference backend), knowledge fingerprint computed (SHA-256). All 5 output formats verified to contain attribution data. SQLite has 5 new tables populated correctly.
+
+Stage Summary:
+- Delivered v2 with ROME/MEMIT-style MLP decomposition, attention head specialization detection, per-fact attribution, and knowledge fingerprint.
+- Total codebase now: 16 Python files (~3500 LOC), 14-table SQLite schema, full web UI with attribution visualization.
+- v2 attribution works WITHOUT inference (weight-only path) — every model can be attributed even without a backend.
+- New CLI subcommand: `attribute` (no inference required).
+- New CLI flag: `--attribution` on `extract` to enable v2 alongside v1.
+- End-to-end validated on synthetic GGUF; all 5 output formats contain attribution data.

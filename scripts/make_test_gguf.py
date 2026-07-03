@@ -90,15 +90,20 @@ def write_tensor_info(buf, name, n_dims, dims, type_id, offset):
 
 
 def make_test_gguf(out_path, vocab_size=64, embed_dim=32, n_layers=2):
-    """Make a tiny GGUF file with a small embedding + 2 transformer-like layers."""
+    """Make a tiny GGUF file with a small embedding + transformer-like layers.
+
+    Each layer has: attn_q, attn_k, attn_v, attn_output, ffn_up, ffn_down.
+    """
     buf = bytearray()
 
+    n_heads = 4
+    head_dim = embed_dim // n_heads
     # ---- Header ----
     buf.extend(struct.pack("<I", GGUF_MAGIC))
     buf.extend(struct.pack("<I", GGUF_VERSION))
-    n_tensors = 1 + (3 * n_layers)  # token_embd + per layer: attn_q, mlp_up, mlp_down
+    n_tensors = 1 + (6 * n_layers)  # token_embd + per layer: attn_q/k/v/output, ffn_up, ffn_down
     buf.extend(struct.pack("<Q", n_tensors))  # tensor_count
-    n_kv = 13  # 12 scalars + 1 array (tokenizer.ggml.tokens)
+    n_kv = 14  # 12 scalars + 2 arrays (tokens + scores)
     buf.extend(struct.pack("<Q", n_kv))  # kv_count
 
     # ---- KV pairs ----
@@ -112,45 +117,36 @@ def make_test_gguf(out_path, vocab_size=64, embed_dim=32, n_layers=2):
     write_kv(buf, "llama.embedding_length", GGUF_TYPE_UINT32, embed_dim)
     write_kv(buf, "llama.block_count", GGUF_TYPE_UINT32, n_layers)
     write_kv(buf, "llama.feed_forward_length", GGUF_TYPE_UINT32, embed_dim * 4)
-    write_kv(buf, "llama.attention.head_count", GGUF_TYPE_UINT32, 4)
-    write_kv(buf, "llama.attention.head_count_kv", GGUF_TYPE_UINT32, 4)
+    write_kv(buf, "llama.attention.head_count", GGUF_TYPE_UINT32, n_heads)
+    write_kv(buf, "llama.attention.head_count_kv", GGUF_TYPE_UINT32, n_heads)
 
     # Tokenizer
     tokens = [f"<tok_{i}>" for i in range(vocab_size)]
     write_array(buf, "tokenizer.ggml.tokens", GGUF_TYPE_STRING, tokens)
+    write_array(buf, "tokenizer.ggml.scores", GGUF_TYPE_FLOAT32, [0.0] * vocab_size)
 
     # ---- Tensor info ----
-    # Compute offsets: each tensor must be aligned to 32 bytes
     align = 32
-    # tensor data starts after header + tensor infos
-    # We'll fill in offsets after computing data layout
     tensor_names_dims = []
-    # token_embd.weight: [vocab_size, embed_dim] F32
     tensor_names_dims.append(("token_embd.weight", [vocab_size, embed_dim], GGML_TYPE_F32))
     for layer in range(n_layers):
+        # Attention: Q, K, V all [embed_dim, embed_dim] (n_heads * head_dim = embed_dim)
         tensor_names_dims.append((f"blk.{layer}.attn_q.weight", [embed_dim, embed_dim], GGML_TYPE_F16))
+        tensor_names_dims.append((f"blk.{layer}.attn_k.weight", [embed_dim, embed_dim], GGML_TYPE_F16))
+        tensor_names_dims.append((f"blk.{layer}.attn_v.weight", [embed_dim, embed_dim], GGML_TYPE_F16))
+        tensor_names_dims.append((f"blk.{layer}.attn_output.weight", [embed_dim, embed_dim], GGML_TYPE_F16))
+        # FFN
         tensor_names_dims.append((f"blk.{layer}.ffn_up.weight", [embed_dim * 4, embed_dim], GGML_TYPE_F16))
         tensor_names_dims.append((f"blk.{layer}.ffn_down.weight", [embed_dim, embed_dim * 4], GGML_TYPE_F16))
 
-    # Compute data offsets
-    data_section_start_placeholder = 0  # we'll compute after writing tensor infos
-    # First write all tensor infos with placeholder offsets
-    tensor_info_section_end = len(buf)
-    # Each tensor info: name + n_dims(uint32) + dims(uint64 * n_dims) + type(uint32) + offset(uint64)
-    # We need to compute the size of the tensor-info section to know where data starts
-    # Easier: pre-compute offsets
-
-    # Size of one tensor info
     def info_size(name, n_dims):
         name_bytes = len(name.encode("utf-8"))
         return 8 + name_bytes + 4 + (8 * n_dims) + 4 + 8
 
     total_info_size = sum(info_size(n, len(d)) for n, d, _ in tensor_names_dims)
     data_start = len(buf) + total_info_size
-    # Align data start to 32
     data_start = (data_start + align - 1) // align * align
 
-    # Write tensor infos with computed offsets
     offset = 0
     for name, dims, ttype in tensor_names_dims:
         write_tensor_info(buf, name, len(dims), dims, ttype, offset)
@@ -163,14 +159,11 @@ def make_test_gguf(out_path, vocab_size=64, embed_dim=32, n_layers=2):
             sz = n_elem * 2
         else:
             sz = n_elem * 4
-        # Align next offset
         offset += (sz + align - 1) // align * align
 
-    # Pad to data_start
     while len(buf) < data_start:
         buf.append(0)
 
-    # ---- Tensor data ----
     for name, dims, ttype in tensor_names_dims:
         n_elem = 1
         for d in dims:
@@ -178,10 +171,9 @@ def make_test_gguf(out_path, vocab_size=64, embed_dim=32, n_layers=2):
         if ttype == GGML_TYPE_F32:
             arr = np.random.randn(n_elem).astype(np.float32)
             buf.extend(arr.tobytes())
-        else:  # F16
+        else:
             arr = np.random.randn(n_elem).astype(np.float16)
             buf.extend(arr.tobytes())
-        # Align
         while len(buf) % align != 0:
             buf.append(0)
 

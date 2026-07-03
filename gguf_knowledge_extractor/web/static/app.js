@@ -165,6 +165,8 @@ $('#btn-extract').onclick = async () => {
   fd.append('do_metadata', $('#opt-metadata').checked);
   fd.append('do_weights', $('#opt-weights').checked);
   fd.append('do_probes', $('#opt-probes').checked);
+  fd.append('do_attribution', $('#opt-attribution').checked);
+  fd.append('attribution_top_k', $('#opt-attribution-top-k').value);
   fd.append('server_url', $('#opt-server-url').value);
   fd.append('prefer_backend', $('#opt-prefer').value);
   fd.append('n_ctx', $('#opt-nctx').value);
@@ -317,6 +319,101 @@ ${job.traceback || ''}</div>
         html += `<div class="stat-block"><div class="stat-value">${(cal.math_accuracy * 100).toFixed(1)}%</div><div class="stat-label">Math accuracy</div></div>`;
       }
       html += `</div>`;
+    }
+
+    // v2: Knowledge Attribution
+    if (r.attribution && Object.keys(r.attribution).length > 0) {
+      const a = r.attribution;
+      const fp = a.knowledge_fingerprint || '';
+      const brief = a.fingerprint_brief || {};
+      const aStats = a.stats || {};
+      html += `<div class="section-h3">v2: Knowledge Attribution (ROME/MEMIT-style)</div>`;
+
+      // Fingerprint banner
+      html += `<div style="background:linear-gradient(90deg,rgba(124,92,255,0.15),rgba(45,212,191,0.15));border:1px solid var(--accent);border-radius:8px;padding:14px;margin:12px 0;">
+        <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em;">Knowledge Fingerprint</div>
+        <div style="font-family:var(--mono);font-size:13px;color:var(--accent-2);word-break:break-all;margin-top:4px;">${fp}</div>
+      </div>`;
+
+      // Attribution stats
+      html += `<div class="stats-grid">
+        <div class="stat-block"><div class="stat-value">${aStats.n_layers_analyzed_mlp || 0}</div><div class="stat-label">MLP layers analyzed</div></div>
+        <div class="stat-block"><div class="stat-value">${aStats.n_layers_analyzed_attn || 0}</div><div class="stat-label">Attn layers analyzed</div></div>
+        <div class="stat-block"><div class="stat-value">${aStats.n_heads_total || 0}</div><div class="stat-label">Attention heads</div></div>
+        <div class="stat-block"><div class="stat-value">${aStats.n_global_top_neurons || 0}</div><div class="stat-label">Top neurons extracted</div></div>
+        <div class="stat-block"><div class="stat-value">${brief.strongest_layer !== null && brief.strongest_layer !== undefined ? 'L'+brief.strongest_layer : '?'}</div><div class="stat-label">Strongest layer</div></div>
+        <div class="stat-block"><div class="stat-value">${brief.most_concentrated_layer !== null && brief.most_concentrated_layer !== undefined ? 'L'+brief.most_concentrated_layer : '?'}</div><div class="stat-label">Most concentrated</div></div>
+      </div>`;
+
+      // Top 5 neurons
+      const top5 = brief.top_5_neurons || [];
+      if (top5.length) {
+        html += `<p style="margin-top:14px;font-size:13px;font-weight:600;color:var(--accent);">Top 5 Memory Neurons (across all layers)</p>`;
+        html += `<table><thead><tr><th>Layer</th><th>Neuron</th><th>Strength</th><th>Top Activating Token</th></tr></thead><tbody>`;
+        top5.forEach(n => {
+          html += `<tr><td>L${n.layer}</td><td>N${n.neuron}</td><td>${(n.strength||0).toFixed(4)}</td><td><code>${(n.top_token||'').replace(/</g,'&lt;')}</code></td></tr>`;
+        });
+        html += `</tbody></table>`;
+      }
+
+      // Per-layer MLP summary
+      const layers = (a.mlp_analysis && a.mlp_analysis.layers) || [];
+      if (layers.length) {
+        html += `<p style="margin-top:14px;font-size:13px;font-weight:600;color:var(--accent);">Per-Layer MLP Memory Map</p>`;
+        html += `<table><thead><tr><th>Layer</th><th>Hidden</th><th>Gated</th><th>Neurons</th><th>Strength</th><th>Concentration</th><th>Top Token</th></tr></thead><tbody>`;
+        layers.slice(0, 20).forEach(L => {
+          const topNeurons = L.top_neurons || [];
+          let topToken = '';
+          if (topNeurons.length && topNeurons[0].top_activating_tokens && topNeurons[0].top_activating_tokens.length) {
+            const t = topNeurons[0].top_activating_tokens[0];
+            topToken = Array.isArray(t) ? t[0] : String(t);
+          }
+          html += `<tr><td>L${L.layer}</td><td>${L.hidden_dim}</td><td>${L.is_gated ? 'yes' : 'no'}</td><td>${L.n_neurons}</td><td>${(L.layer_strength||0).toFixed(2)}</td><td>${((L.concentration||0)*100).toFixed(1)}%</td><td><code>${String(topToken).replace(/</g,'&lt;').substring(0,30)}</code></td></tr>`;
+        });
+        if (layers.length > 20) {
+          html += `<tr><td colspan="7" style="text-align:center;color:var(--text-dim);font-style:italic;">... and ${layers.length - 20} more layers (see JSON export)</td></tr>`;
+        }
+        html += `</tbody></table>`;
+      }
+
+      // Attention head specialization
+      const attn = a.attention_analysis || {};
+      const topCopy = attn.top_copy_heads || [];
+      const topInd = attn.top_induction_heads || [];
+      if (topCopy.length || topInd.length) {
+        html += `<p style="margin-top:14px;font-size:13px;font-weight:600;color:var(--accent);">Attention Head Specialization</p>`;
+        if (topCopy.length) {
+          html += `<p style="font-size:12px;color:var(--text-dim);">Top Copy Heads (V·O ≈ identity — token-copying):</p>`;
+          html += `<table><thead><tr><th>Layer</th><th>Head</th><th>Copy Score</th><th>Specialization</th></tr></thead><tbody>`;
+          topCopy.slice(0, 8).forEach(h => {
+            html += `<tr><td>L${h.layer}</td><td>H${h.head_index}</td><td>${(h.copy_score||0).toFixed(3)}</td><td>${(h.specialization||0).toFixed(3)}</td></tr>`;
+          });
+          html += `</tbody></table>`;
+        }
+        if (topInd.length) {
+          html += `<p style="font-size:12px;color:var(--text-dim);margin-top:10px;">Top Induction Heads (low-rank Q·Q^T):</p>`;
+          html += `<table><thead><tr><th>Layer</th><th>Head</th><th>Induction Score</th><th>Top SV</th></tr></thead><tbody>`;
+          topInd.slice(0, 8).forEach(h => {
+            html += `<tr><td>L${h.layer}</td><td>H${h.head_index}</td><td>${(h.induction_score||0).toFixed(3)}</td><td>${(h.top_singular_value||0).toFixed(2)}</td></tr>`;
+          });
+          html += `</tbody></table>`;
+        }
+      }
+
+      // Per-fact attribution
+      const factAttr = a.fact_attributions || [];
+      if (factAttr.length) {
+        html += `<p style="margin-top:14px;font-size:13px;font-weight:600;color:var(--accent);">Per-Fact Attribution</p>`;
+        html += `<p class="hint">Each fact is attributed to the layer+neuron whose key vector is most strongly activated by tokens in the prompt.</p>`;
+        html += `<table><thead><tr><th>Probe</th><th>Layer</th><th>Neuron</th><th>Confidence</th><th>Method</th></tr></thead><tbody>`;
+        factAttr.slice(0, 25).forEach(f => {
+          html += `<tr><td>${f.probe_id || ''}</td><td>${f.attributed_layer !== null ? 'L'+f.attributed_layer : '?'}</td><td>${f.attributed_neuron !== null ? 'N'+f.attributed_neuron : '?'}</td><td>${(f.attribution_confidence||0).toFixed(3)}</td><td><code>${f.method || ''}</code></td></tr>`;
+        });
+        if (factAttr.length > 25) {
+          html += `<tr><td colspan="5" style="text-align:center;color:var(--text-dim);font-style:italic;">... and ${factAttr.length - 25} more (see JSON export)</td></tr>`;
+        }
+        html += `</tbody></table>`;
+      }
     }
 
     // Downloads

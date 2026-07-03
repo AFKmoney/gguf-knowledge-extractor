@@ -36,7 +36,8 @@ def export_markdown(report: KnowledgeReport, out_path: Union[str, Path]) -> str:
     lines.append("5. [Concept Mastery](#5-concept-mastery)")
     lines.append("6. [Behavioral Profile](#6-behavioral-profile)")
     lines.append("7. [Calibration & Hallucination](#7-calibration--hallucination)")
-    lines.append("8. [Raw Probe Results](#8-raw-probe-results)")
+    lines.append("8. [Knowledge Attribution (v2)](#8-knowledge-attribution-v2)")
+    lines.append("9. [Raw Probe Results](#9-raw-probe-results)")
     lines.append("")
 
     # ------------------------- 1. Metadata ------------------------- #
@@ -251,8 +252,110 @@ def export_markdown(report: KnowledgeReport, out_path: Union[str, Path]) -> str:
                 lines.append(f"| {h.get('probe_id','')} | {'yes' if h.get('acknowledged_uncertainty') else 'no'} | {ex} |")
             lines.append("")
 
-    # ------------------------- 8. Raw ------------------------- #
-    lines.append("## 8. Raw Probe Results")
+    # ------------------------- 8. Attribution (v2) ------------------------- #
+    lines.append("## 8. Knowledge Attribution (v2)")
+    lines.append("")
+    attr = report.attribution if isinstance(report.attribution, dict) else {}
+    if not attr:
+        lines.append("_Attribution was not run. Use `--attribution` on the CLI or check the box in the web UI to enable._")
+        lines.append("")
+    else:
+        fp = attr.get("knowledge_fingerprint", "")
+        brief = attr.get("fingerprint_brief", {}) or {}
+        stats = attr.get("stats", {}) or {}
+        lines.append(f"**Knowledge fingerprint:** `{fp}`")
+        lines.append("")
+        lines.append("| Metric | Value |")
+        lines.append("|---|---|")
+        lines.append(f"| Layers analyzed (MLP) | {stats.get('n_layers_analyzed_mlp', 0)} |")
+        lines.append(f"| Layers analyzed (attention) | {stats.get('n_layers_analyzed_attn', 0)} |")
+        lines.append(f"| Total attention heads | {stats.get('n_heads_total', 0)} |")
+        lines.append(f"| Global top neurons extracted | {stats.get('n_global_top_neurons', 0)} |")
+        lines.append(f"| Facts attributed | {stats.get('n_facts_attributed', 0)} |")
+        lines.append(f"| Attribution elapsed | {stats.get('elapsed_seconds', 0):.2f}s |")
+        lines.append(f"| Strongest layer (most memory strength) | {brief.get('strongest_layer', '?')} |")
+        lines.append(f"| Most concentrated layer | {brief.get('most_concentrated_layer', '?')} |")
+        lines.append("")
+
+        # Top 5 neurons
+        top5 = brief.get("top_5_neurons", []) or []
+        if top5:
+            lines.append("### Top 5 Memory Neurons (across all layers)")
+            lines.append("")
+            lines.append("| Layer | Neuron | Strength | Top Activating Token |")
+            lines.append("|---|---|---|---|")
+            for n in top5:
+                lines.append(f"| {n.get('layer','')} | {n.get('neuron','')} | {n.get('strength',0):.4f} | `{n.get('top_token','')}` |")
+            lines.append("")
+
+        # Per-layer memory summary
+        mlp = attr.get("mlp_analysis", {}) or {}
+        layers = mlp.get("layers", []) or []
+        if layers:
+            lines.append("### Per-Layer MLP Memory Map")
+            lines.append("")
+            lines.append("| Layer | Hidden dim | Gated | Neurons | Layer strength | Concentration | Top neuron's top token |")
+            lines.append("|---|---|---|---|---|---|---|")
+            for L in layers[:30]:
+                top_neurons = L.get("top_neurons", []) or []
+                top_token = ""
+                if top_neurons:
+                    activating = top_neurons[0].get("top_activating_tokens", []) or []
+                    if activating:
+                        top_token = activating[0][0] if isinstance(activating[0], list) else str(activating[0])
+                lines.append(
+                    f"| {L.get('layer','')} | {L.get('hidden_dim','')} | {'yes' if L.get('is_gated') else 'no'} "
+                    f"| {L.get('n_neurons','')} | {L.get('layer_strength',0):.2f} "
+                    f"| {L.get('concentration',0)*100:.1f}% | `{str(top_token)[:30]}` |"
+                )
+            if len(layers) > 30:
+                lines.append(f"_... and {len(layers)-30} more layers (see JSON export)_")
+            lines.append("")
+
+        # Attention head analysis
+        attn = attr.get("attention_analysis", {}) or {}
+        top_copy = attn.get("top_copy_heads", []) or []
+        top_ind = attn.get("top_induction_heads", []) or []
+        if top_copy or top_ind:
+            lines.append("### Attention Head Specialization")
+            lines.append("")
+            if top_copy:
+                lines.append("**Top Copy Heads** (V·O closest to identity — likely token-copying heads):")
+                lines.append("")
+                lines.append("| Layer | Head | Copy Score | Specialization |")
+                lines.append("|---|---|---|---|")
+                for h in top_copy[:10]:
+                    lines.append(f"| {h.get('layer','')} | {h.get('head_index','')} | {h.get('copy_score',0):.3f} | {h.get('specialization',0):.3f} |")
+                lines.append("")
+            if top_ind:
+                lines.append("**Top Induction Heads** (low-rank Q·Q^T — likely induction/copy-pattern heads):")
+                lines.append("")
+                lines.append("| Layer | Head | Induction Score | Top Singular Value |")
+                lines.append("|---|---|---|---|")
+                for h in top_ind[:10]:
+                    lines.append(f"| {h.get('layer','')} | {h.get('head_index','')} | {h.get('induction_score',0):.3f} | {h.get('top_singular_value',0):.2f} |")
+                lines.append("")
+
+        # Per-fact attribution
+        fact_attr = attr.get("fact_attributions", []) or []
+        if fact_attr:
+            lines.append("### Per-Fact Attribution (weight-only heuristic)")
+            lines.append("")
+            lines.append("Each fact is attributed to the layer+neuron whose key vector is most strongly "
+                         "activated by tokens in the prompt. Method = `weight_only` means inference was not used.")
+            lines.append("")
+            lines.append("| Probe | Attributed Layer | Attributed Neuron | Confidence | Method |")
+            lines.append("|---|---|---|---|---|")
+            for f in fact_attr[:50]:
+                lines.append(
+                    f"| {f.get('probe_id','')} | {f.get('attributed_layer','')} "
+                    f"| {f.get('attributed_neuron','')} | {f.get('attribution_confidence',0):.3f} "
+                    f"| {f.get('method','')} |"
+                )
+            lines.append("")
+
+    # ------------------------- 9. Raw ------------------------- #
+    lines.append("## 9. Raw Probe Results")
     lines.append("")
     lines.append(f"_Total probes run: {len(report.probe_results)}_")
     lines.append("")
