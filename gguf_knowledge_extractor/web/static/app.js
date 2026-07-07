@@ -983,7 +983,7 @@ if (imatrixDz) {
   imatrixDz.ondragover = (e) => { e.preventDefault(); imatrixDz.classList.add('drag-over'); };
   imatrixDz.ondragleave = () => imatrixDz.classList.remove('drag-over');
   imatrixDz.ondrop = (e) => { e.preventDefault(); imatrixDz.classList.remove('drag-over'); if (e.dataTransfer.files.length) { imatrixFile = e.dataTransfer.files[0]; $('#imatrix-selected-file').textContent = `✓ ${imatrixFile.name}`; $('#btn-imatrix').disabled = false; } };
-  imatrixInput.onchange = (e) => { if (e.target.files.length) { imatrixFile = e.dataTransfer.files[0]; $('#imatrix-selected-file').textContent = `✓ ${imatrixFile.name}`; $('#btn-imatrix').disabled = false; } };
+  imatrixInput.onchange = (e) => { if (e.target.files.length) { imatrixFile = e.target.files[0]; $('#imatrix-selected-file').textContent = `✓ ${imatrixFile.name}`; $('#btn-imatrix').disabled = false; } };
 }
 $('#btn-imatrix')?.addEventListener('click', async () => {
   if (!imatrixFile) return;
