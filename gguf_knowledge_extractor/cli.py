@@ -51,6 +51,7 @@ from gguf_knowledge_extractor.core.activation_patcher import ActivationPatcher
 from gguf_knowledge_extractor.core.imatrix import ImatrixComputer
 from gguf_knowledge_extractor.core.quantizer import SmartQuantizer
 from gguf_knowledge_extractor.core.knowledge_transplant import KnowledgeTransplanter
+from gguf_knowledge_extractor.core.abliterator import Abliterator
 
 
 def cmd_extract(args):
@@ -981,6 +982,44 @@ def cmd_transplant(args):
     print(f"\n[transplant] Report: {report_path}")
 
 
+def cmd_abliterate(args):
+    """v8: Abliterate a model — remove refusal behavior without retraining."""
+    print(f"[abliterate] Source: {args.gguf}")
+    print(f"[abliterate] Strength: {args.strength}")
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    output_path = out_dir / f"{Path(args.gguf).stem}_abliterated.gguf"
+
+    abliterator = Abliterator(
+        source_path=args.gguf,
+        output_path=str(output_path),
+    )
+    if not abliterator.is_available():
+        print("[abliterate] ERROR: forward pass not available (need Llama-arch)")
+        sys.exit(1)
+
+    def progress(msg, cur, total):
+        if total > 0:
+            print(f"[abliterate] [{cur}/{total}] {msg}")
+
+    report = abliterator.abliterate(strength=args.strength, progress_cb=progress)
+    print(f"\n[abliterate] Done in {report.elapsed_seconds:.2f}s")
+    print(f"[abliterate] Success: {report.success}")
+    if report.error:
+        print(f"[abliterate] Error: {report.error[:500]}")
+    else:
+        print(f"[abliterate] Output: {report.output_gguf}")
+        print(f"[abliterate] Layers processed: {report.n_layers}")
+        print(f"[abliterate] Tensors orthogonalized: {report.n_tensors_orthogonalized}")
+        print(f"[abliterate] Refusal directions found: {len(report.refusal_directions)}")
+
+    base = Path(args.gguf).stem
+    report_path = out_dir / f"{base}_abliteration_report.json"
+    with open(report_path, "w") as f:
+        json.dump(_to_jsonable_trace(report), f, indent=2, default=str)
+    print(f"[abliterate] Report: {report_path}")
+
+
 def main():
     p = argparse.ArgumentParser(prog="gguf-knowledge-extractor", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1146,6 +1185,13 @@ def main():
     ptp.add_argument("--strength", type=float, default=1.0, help="0=blend, 1=full overwrite")
     ptp.add_argument("--out", default="./download")
     ptp.set_defaults(func=cmd_transplant)
+
+    # v8: abliterate
+    pab = sub.add_parser("abliterate", help="v8: Remove refusal behavior — create uncensored/abliterated model without retraining")
+    pab.add_argument("--gguf", required=True)
+    pab.add_argument("--strength", type=float, default=1.0, help="0=no change, 1=full abliteration (default: 1.0)")
+    pab.add_argument("--out", default="./download")
+    pab.set_defaults(func=cmd_abliterate)
 
     args = p.parse_args()
     args.func(args)

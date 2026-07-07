@@ -22,6 +22,7 @@ const VIEW_META = {
   surgery:   { title: 'GGUF Surgery', subtitle: 'Direct model modification without retraining' },
   merge:     { title: 'Model Merging', subtitle: 'SLERP, TIES, DARE, Linear — combine two models' },
   transplant:{ title: 'Knowledge Transplant', subtitle: 'Extract knowledge from one model, inject into another' },
+  abliterate:{ title: 'Abliteration', subtitle: 'Remove refusal behavior — create uncensored models without retraining' },
   imatrix:   { title: 'Importance Matrix', subtitle: 'Compute which tensors matter more for smarter quantization' },
   quantize:  { title: 'Smart Quantizer', subtitle: 'Compress GGUF models with optional imatrix guidance' },
   diff:      { title: 'GGUF Diff', subtitle: 'Compare two GGUFs at byte, metadata, and tensor level' },
@@ -1052,4 +1053,33 @@ $('#btn-transplant')?.addEventListener('click', async () => {
     navigateTo('job');
     pollJob(data.job_id);
   } catch (e) { toast('Failed: ' + e.message, 'error'); $('#btn-transplant').disabled = false; $('#btn-transplant').textContent = 'Transplant Knowledge →'; }
+});
+
+// ---------------------------------------------------------------- //
+// v8: Abliterate
+// ---------------------------------------------------------------- //
+let abliterateFile = null;
+const ablDz = $('#abliterate-dropzone');
+const ablInput = $('#abliterate-file-input');
+if (ablDz) {
+  ablDz.onclick = () => ablInput.click();
+  ablDz.ondragover = (e) => { e.preventDefault(); ablDz.classList.add('drag-over'); };
+  ablDz.ondragleave = () => ablDz.classList.remove('drag-over');
+  ablDz.ondrop = (e) => { e.preventDefault(); ablDz.classList.remove('drag-over'); if (e.dataTransfer.files.length) { abliterateFile = e.dataTransfer.files[0]; $('#abliterate-selected-file').textContent = `✓ ${abliterateFile.name}`; $('#btn-abliterate').disabled = false; } };
+  ablInput.onchange = (e) => { if (e.target.files.length) { abliterateFile = e.target.files[0]; $('#abliterate-selected-file').textContent = `✓ ${abliterateFile.name}`; $('#btn-abliterate').disabled = false; } };
+}
+$('#btn-abliterate')?.addEventListener('click', async () => {
+  if (!abliterateFile) return;
+  const fd = new FormData();
+  fd.append('file', abliterateFile);
+  fd.append('strength', $('#abliterate-strength').value);
+  $('#btn-abliterate').disabled = true; $('#btn-abliterate').textContent = 'Abliterating...';
+  try {
+    const res = await fetch('/api/abliterate', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail);
+    toast('Abliteration started', 'success');
+    navigateTo('job');
+    pollJob(data.job_id);
+  } catch (e) { toast('Failed: ' + e.message, 'error'); $('#btn-abliterate').disabled = false; $('#btn-abliterate').textContent = 'Abliterate Model →'; }
 });

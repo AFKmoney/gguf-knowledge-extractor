@@ -43,6 +43,7 @@ from ..core.activation_patcher import ActivationPatcher
 from ..core.imatrix import ImatrixComputer
 from ..core.quantizer import SmartQuantizer
 from ..core.knowledge_transplant import KnowledgeTransplanter
+from ..core.abliterator import Abliterator
 
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -725,12 +726,78 @@ def create_app() -> FastAPI:
         background_tasks.add_task(_run_transplant, job_id, source, target, strategy, strength, facts_file, str(job_dir))
         return {"job_id": job_id, "status": "queued"}
 
+    # ------------------------------------------------------------------ #
+    # v8 API: Abliterate
+    # ------------------------------------------------------------------ #
+    @app.post("/api/abliterate")
+    async def api_abliterate(
+        background_tasks: BackgroundTasks,
+        file: UploadFile = File(...),
+        strength: float = Form(1.0),
+    ):
+        """v8: Abliterate a model — remove refusal behavior."""
+        if not file.filename or not file.filename.lower().endswith(".gguf"):
+            raise HTTPException(400, "File must be a .gguf file")
+        job_id = str(uuid.uuid4())[:8]
+        job_dir = JOBS_DIR / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        gguf_path = job_dir / file.filename
+        with open(gguf_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        JOBS[job_id] = {
+            "id": job_id, "status": "queued",
+            "gguf_path": str(gguf_path), "gguf_filename": file.filename,
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "progress": {"message": "queued", "current": 0, "total": 0},
+            "result_paths": {}, "error": None,
+            "options": {"strength": strength},
+            "kind": "abliterate",
+        }
+        background_tasks.add_task(_run_abliterate, job_id, str(gguf_path), strength)
+        return {"job_id": job_id, "status": "queued"}
+
     return app
 
 
 # ---------------------------------------------------------------------- #
 # v7 background workers
 # ---------------------------------------------------------------------- #
+def _run_abliterate(job_id: str, gguf_path: str, strength: float):
+    """Background worker for abliteration."""
+    job = JOBS[job_id]
+    job["status"] = "running"
+    try:
+        job["progress"] = {"message": "Abliterating model", "current": 0, "total": 3}
+        output_path = str(Path(gguf_path).parent / f"{Path(gguf_path).stem}_abliterated.gguf")
+        abliterator = Abliterator(source_path=gguf_path, output_path=output_path)
+        if not abliterator.is_available():
+            job["status"] = "failed"
+            job["error"] = "Forward pass not available (need Llama-arch)"
+            return
+
+        def progress_cb(msg, cur, total):
+            job["progress"] = {"message": msg, "current": cur, "total": total}
+
+        report = abliterator.abliterate(strength=strength, progress_cb=progress_cb)
+        import dataclasses
+        report_dict = _to_jsonable(dataclasses.asdict(report))
+
+        report_path = str(Path(gguf_path).parent / f"{Path(gguf_path).stem}_abliteration_report.json")
+        import json as _json
+        with open(report_path, "w") as f:
+            _json.dump(report_dict, f, indent=2, default=str)
+
+        job["result_paths"] = {"abliterated_gguf": report.output_gguf, "json": report_path}
+        job["report_preview"] = report_dict
+        job["status"] = "completed"
+        job["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception as e:
+        import traceback
+        job["status"] = "failed"
+        job["error"] = str(e)
+        job["traceback"] = traceback.format_exc()
+
+
 def _run_imatrix(job_id: str, gguf_path: str):
     """Background worker for imatrix computation."""
     import gguf

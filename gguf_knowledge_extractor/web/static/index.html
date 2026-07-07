@@ -72,6 +72,11 @@
         Transplant
         <span class="nav-badge">v7</span>
       </a>
+      <a href="#" class="nav-item" data-view="abliterate">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18.36 6.64a9 9 0 11-12.73 0M12 2v8"/></svg>
+        Abliterate
+        <span class="nav-badge">v8</span>
+      </a>
       <a href="#" class="nav-item" data-view="diff">
         <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3v6m0 6v6M3 12h6m6 0h6"/><circle cx="12" cy="12" r="3"/></svg>
         Diff
@@ -628,6 +633,29 @@
           <div class="form-group"><div class="form-label">Use Imatrix</div><select class="form-select" id="quantize-use-imatrix"><option value="false">No (uniform quantization)</option><option value="true">Yes (compute imatrix first)</option></select></div>
         </div>
         <button id="btn-quantize" class="btn btn-primary btn-lg" disabled style="margin-top:16px;">Quantize Model →</button>
+      </div>
+    </section>
+
+    <!-- ====== Abliterate View ====== -->
+    <section id="view-abliterate" class="view">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="16" height="16"><path d="M18.36 6.64a9 9 0 11-12.73 0M12 2v8"/></svg>Abliteration — Remove Refusal Behavior</div>
+            <div class="card-subtitle">Computes the "refusal direction" from harmful/harmless calibration prompts and orthogonalizes all weight matrices against it — creating an uncensored model without retraining</div>
+          </div>
+        </div>
+        <div class="dropzone" id="abliterate-dropzone">
+          <input type="file" id="abliterate-file-input" accept=".gguf" hidden />
+          <div class="dropzone-icon"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="24" height="24"><path d="M18.36 6.64a9 9 0 11-12.73 0M12 2v8"/></svg></div>
+          <div class="dropzone-text">Drop a .gguf file</div>
+          <div class="dropzone-hint">Llama-arch required (attn + MLP + norms)</div>
+        </div>
+        <p class="form-hint" id="abliterate-selected-file" style="margin-top:12px;"></p>
+        <div class="form-row" style="margin-top:16px;">
+          <div class="form-group"><div class="form-label">Strength (0=no change, 1=full abliteration)</div><input type="number" class="form-input" id="abliterate-strength" value="1.0" step="0.1" min="0" max="2" /></div>
+        </div>
+        <button id="btn-abliterate" class="btn btn-primary btn-lg" disabled style="margin-top:16px;">Abliterate Model →</button>
       </div>
     </section>
 
