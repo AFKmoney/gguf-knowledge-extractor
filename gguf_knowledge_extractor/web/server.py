@@ -40,6 +40,9 @@ from ..core.gguf_surgeon import GGUFSurgeon, surgery_session
 from ..core.model_merger import ModelMerger
 from ..core.gguf_diff import GGUFDiffer
 from ..core.activation_patcher import ActivationPatcher
+from ..core.imatrix import ImatrixComputer
+from ..core.quantizer import SmartQuantizer
+from ..core.knowledge_transplant import KnowledgeTransplanter
 
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -639,7 +642,215 @@ def create_app() -> FastAPI:
         background_tasks.add_task(_run_mediate, job_id, str(gguf_path), prompt, expected, noise)
         return {"job_id": job_id, "status": "queued"}
 
+    # ------------------------------------------------------------------ #
+    # v7 API: Imatrix, Quantize, Transplant
+    # ------------------------------------------------------------------ #
+    @app.post("/api/imatrix")
+    async def api_imatrix(
+        background_tasks: BackgroundTasks,
+        file: UploadFile = File(...),
+    ):
+        """v7: Compute importance matrix."""
+        if not file.filename or not file.filename.lower().endswith(".gguf"):
+            raise HTTPException(400, "File must be a .gguf file")
+        job_id = str(uuid.uuid4())[:8]
+        job_dir = JOBS_DIR / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        gguf_path = job_dir / file.filename
+        with open(gguf_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        JOBS[job_id] = {
+            "id": job_id, "status": "queued",
+            "gguf_path": str(gguf_path), "gguf_filename": file.filename,
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "progress": {"message": "queued", "current": 0, "total": 0},
+            "result_paths": {}, "error": None,
+            "kind": "imatrix",
+        }
+        background_tasks.add_task(_run_imatrix, job_id, str(gguf_path))
+        return {"job_id": job_id, "status": "queued"}
+
+    @app.post("/api/quantize")
+    async def api_quantize(
+        background_tasks: BackgroundTasks,
+        file: UploadFile = File(...),
+        qtype: str = Form("Q4_0"),
+        use_imatrix: bool = Form(False),
+    ):
+        """v7: Quantize a GGUF model."""
+        if not file.filename or not file.filename.lower().endswith(".gguf"):
+            raise HTTPException(400, "File must be a .gguf file")
+        job_id = str(uuid.uuid4())[:8]
+        job_dir = JOBS_DIR / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        gguf_path = job_dir / file.filename
+        with open(gguf_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        JOBS[job_id] = {
+            "id": job_id, "status": "queued",
+            "gguf_path": str(gguf_path), "gguf_filename": file.filename,
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "progress": {"message": "queued", "current": 0, "total": 0},
+            "result_paths": {}, "error": None,
+            "options": {"qtype": qtype, "use_imatrix": use_imatrix},
+            "kind": "quantize",
+        }
+        background_tasks.add_task(_run_quantize, job_id, str(gguf_path), qtype, use_imatrix)
+        return {"job_id": job_id, "status": "queued"}
+
+    @app.post("/api/transplant")
+    async def api_transplant(
+        background_tasks: BackgroundTasks,
+        source: str = Form(...),
+        target: str = Form(...),
+        strategy: str = Form("scaled"),
+        strength: float = Form(1.0),
+        facts_file: str = Form(""),
+    ):
+        """v7: Knowledge transplant from source to target model."""
+        if not Path(source).exists() or not Path(target).exists():
+            raise HTTPException(400, "Source or target file not found")
+        job_id = str(uuid.uuid4())[:8]
+        JOBS[job_id] = {
+            "id": job_id, "status": "queued",
+            "gguf_filename": f"transplant_{Path(target).stem}",
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "progress": {"message": "queued", "current": 0, "total": 0},
+            "result_paths": {}, "error": None,
+            "options": {"source": source, "target": target, "strategy": strategy, "strength": strength},
+            "kind": "transplant",
+        }
+        job_dir = JOBS_DIR / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        background_tasks.add_task(_run_transplant, job_id, source, target, strategy, strength, facts_file, str(job_dir))
+        return {"job_id": job_id, "status": "queued"}
+
     return app
+
+
+# ---------------------------------------------------------------------- #
+# v7 background workers
+# ---------------------------------------------------------------------- #
+def _run_imatrix(job_id: str, gguf_path: str):
+    """Background worker for imatrix computation."""
+    import gguf
+    job = JOBS[job_id]
+    job["status"] = "running"
+    try:
+        reader = gguf.GGUFReader(gguf_path)
+        fields = _load_fields(reader)
+        imputer = ImatrixComputer(reader, fields)
+        if not imputer.is_available():
+            job["status"] = "failed"
+            job["error"] = "Forward pass not available"
+            return
+        job["progress"] = {"message": "Computing importance matrix", "current": 0, "total": 1}
+        report = imputer.compute()
+        import dataclasses
+        report_dict = _to_jsonable(dataclasses.asdict(report))
+        job_dir = Path(gguf_path).parent
+        out_path = job_dir / f"{Path(gguf_path).stem}_imatrix.json"
+        import json as _json
+        with open(out_path, "w") as f:
+            _json.dump(report_dict, f, indent=2, default=str)
+        job["result_paths"] = {"json": str(out_path)}
+        job["report_preview"] = report_dict
+        job["status"] = "completed"
+        job["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception as e:
+        import traceback
+        job["status"] = "failed"
+        job["error"] = str(e)
+        job["traceback"] = traceback.format_exc()
+
+
+def _run_quantize(job_id: str, gguf_path: str, qtype: str, use_imatrix: bool):
+    """Background worker for quantization."""
+    job = JOBS[job_id]
+    job["status"] = "running"
+    try:
+        job["progress"] = {"message": f"Quantizing to {qtype}", "current": 0, "total": 1}
+        job_dir = Path(gguf_path).parent
+        output_path = job_dir / f"{Path(gguf_path).stem}_{qtype.lower()}.gguf"
+
+        imatrix_report = None
+        if use_imatrix:
+            job["progress"] = {"message": "Computing imatrix first...", "current": 0, "total": 1}
+            import gguf
+            reader = gguf.GGUFReader(gguf_path)
+            fields = _load_fields(reader)
+            imputer = ImatrixComputer(reader, fields)
+            if imputer.is_available():
+                import dataclasses
+                imatrix_report = _to_jsonable(dataclasses.asdict(imputer.compute()))
+
+        q = SmartQuantizer(gguf_path, imatrix_report=imatrix_report)
+        report = q.quantize(str(output_path), target_qtype=qtype, use_imatrix=bool(imatrix_report))
+
+        import dataclasses
+        report_dict = _to_jsonable(dataclasses.asdict(report))
+        report_path = job_dir / f"{Path(gguf_path).stem}_{qtype.lower()}_report.json"
+        import json as _json
+        with open(report_path, "w") as f:
+            _json.dump(report_dict, f, indent=2, default=str)
+
+        job["result_paths"] = {"quantized_gguf": report.output_path, "json": str(report_path)}
+        job["report_preview"] = report_dict
+        job["status"] = "completed"
+        job["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception as e:
+        import traceback
+        job["status"] = "failed"
+        job["error"] = str(e)
+        job["traceback"] = traceback.format_exc()
+
+
+def _run_transplant(job_id: str, source: str, target: str, strategy: str, strength: float, facts_file: str, output_dir: str):
+    """Background worker for knowledge transplant."""
+    import json as _json
+    job = JOBS[job_id]
+    job["status"] = "running"
+    try:
+        job["progress"] = {"message": "Transplanting knowledge", "current": 0, "total": 1}
+        output_path = str(Path(output_dir) / f"{Path(target).stem}_transplanted.gguf")
+
+        facts = None
+        if facts_file and Path(facts_file).exists():
+            with open(facts_file) as f:
+                facts = _json.load(f)
+
+        if not facts:
+            from ..core.probes.base import list_default_packs
+            packs = list_default_packs()
+            facts = []
+            for pack in packs:
+                if pack.category == "facts":
+                    for probe in pack.probes:
+                        facts.append({"probe_id": probe.id, "prompt": probe.prompt, "expected": probe.expected})
+
+        transplanter = KnowledgeTransplanter(source, target, output_path)
+        if not transplanter.is_available():
+            job["status"] = "failed"
+            job["error"] = "Forward pass not available for one or both models"
+            return
+
+        report = transplanter.transplant(facts=facts, strategy=strategy, strength=strength)
+        import dataclasses
+        report_dict = _to_jsonable(dataclasses.asdict(report))
+
+        report_path = str(Path(output_dir) / f"{Path(target).stem}_transplant_report.json")
+        with open(report_path, "w") as f:
+            _json.dump(report_dict, f, indent=2, default=str)
+
+        job["result_paths"] = {"transplanted_gguf": report.output_model, "json": report_path}
+        job["report_preview"] = report_dict
+        job["status"] = "completed"
+        job["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception as e:
+        import traceback
+        job["status"] = "failed"
+        job["error"] = str(e)
+        job["traceback"] = traceback.format_exc()
 
 
 # ---------------------------------------------------------------------- #

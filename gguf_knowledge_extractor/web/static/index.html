@@ -67,9 +67,28 @@
         Merge
         <span class="nav-badge">v6</span>
       </a>
+      <a href="#" class="nav-item" data-view="transplant">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M16 3h5v5M4 20l16-16M21 16v5h-5M4 4l5 5M15 15l6 6"/></svg>
+        Transplant
+        <span class="nav-badge">v7</span>
+      </a>
       <a href="#" class="nav-item" data-view="diff">
         <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3v6m0 6v6M3 12h6m6 0h6"/><circle cx="12" cy="12" r="3"/></svg>
         Diff
+      </a>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-section-label">Compression</div>
+      <a href="#" class="nav-item" data-view="imatrix">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 3v18h18M7 14l4-4 4 4 6-6"/></svg>
+        Imatrix
+        <span class="nav-badge">v7</span>
+      </a>
+      <a href="#" class="nav-item" data-view="quantize">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 8v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h14a2 2 0 012 2zM3 8h18M8 12h8"/></svg>
+        Quantize
+        <span class="nav-badge">v7</span>
       </a>
     </div>
 
@@ -543,6 +562,72 @@
           </div>
         </div>
         <div id="models-info-result" style="margin-top:16px;"></div>
+      </div>
+    </section>
+
+    <!-- ====== Transplant View ====== -->
+    <section id="view-transplant" class="view">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="16" height="16"><path d="M16 3h5v5M4 20l16-16M21 16v5h-5M4 4l5 5M15 15l6 6"/></svg>Knowledge Transplant</div>
+            <div class="card-subtitle">Extract knowledge from a source model and inject it into a target model — without retraining either</div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><div class="form-label">Source Model (extract from)</div><input type="text" class="form-input" id="transplant-source" placeholder="/path/to/source.gguf" /></div>
+          <div class="form-group"><div class="form-label">Target Model (inject into)</div><input type="text" class="form-input" id="transplant-target" placeholder="/path/to/target.gguf" /></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><div class="form-label">Layer Mapping Strategy</div><select class="form-select" id="transplant-strategy"><option value="scaled">Scaled (proportional layer mapping)</option><option value="same">Same (direct mapping, requires same arch)</option></select></div>
+          <div class="form-group"><div class="form-label">Strength (0=blend, 1=overwrite)</div><input type="number" class="form-input" id="transplant-strength" value="1.0" step="0.1" min="0" max="1" /></div>
+          <div class="form-group"><div class="form-label">Facts File (optional, JSON)</div><input type="text" class="form-input" id="transplant-facts-file" placeholder="Leave empty to use default fact packs" /></div>
+        </div>
+        <button id="btn-transplant" class="btn btn-primary btn-lg" style="margin-top:16px;">Transplant Knowledge →</button>
+      </div>
+    </section>
+
+    <!-- ====== Imatrix View ====== -->
+    <section id="view-imatrix" class="view">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="16" height="16"><path d="M3 3v18h18M7 14l4-4 4 4 6-6"/></svg>Importance Matrix (Imatrix)</div>
+            <div class="card-subtitle">Compute which tensors matter more — used to guide smarter quantization</div>
+          </div>
+        </div>
+        <div class="dropzone" id="imatrix-dropzone">
+          <input type="file" id="imatrix-file-input" accept=".gguf" hidden />
+          <div class="dropzone-icon"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="24" height="24"><path d="M3 3v18h18M7 14l4-4 4 4 6-6"/></svg></div>
+          <div class="dropzone-text">Drop a .gguf file</div>
+          <div class="dropzone-hint">Calibration prompts will be run through the model to compute importance</div>
+        </div>
+        <p class="form-hint" id="imatrix-selected-file" style="margin-top:12px;"></p>
+        <button id="btn-imatrix" class="btn btn-primary btn-lg" disabled style="margin-top:16px;">Compute Imatrix →</button>
+      </div>
+    </section>
+
+    <!-- ====== Quantize View ====== -->
+    <section id="view-quantize" class="view">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="16" height="16"><path d="M21 8v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h14a2 2 0 012 2zM3 8h18M8 12h8"/></svg>Smart Quantizer</div>
+            <div class="card-subtitle">Quantize a GGUF model — optionally guided by an imatrix for better quality at the same size</div>
+          </div>
+        </div>
+        <div class="dropzone" id="quantize-dropzone">
+          <input type="file" id="quantize-file-input" accept=".gguf" hidden />
+          <div class="dropzone-icon"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="24" height="24"><path d="M21 8v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h14a2 2 0 012 2zM3 8h18M8 12h8"/></svg></div>
+          <div class="dropzone-text">Drop a .gguf file</div>
+          <div class="dropzone-hint">Supports F16, BF16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0</div>
+        </div>
+        <p class="form-hint" id="quantize-selected-file" style="margin-top:12px;"></p>
+        <div class="form-row" style="margin-top:16px;">
+          <div class="form-group"><div class="form-label">Target Quantization</div><select class="form-select" id="quantize-qtype"><option value="Q4_0">Q4_0 (smallest, 4-bit)</option><option value="Q4_1">Q4_1 (4-bit with offset)</option><option value="Q5_0">Q5_0 (5-bit)</option><option value="Q5_1">Q5_1 (5-bit with offset)</option><option value="Q8_0">Q8_0 (8-bit, near-lossless)</option><option value="F16">F16 (half precision)</option><option value="BF16">BF16 (brain float)</option><option value="F32">F32 (full precision)</option></select></div>
+          <div class="form-group"><div class="form-label">Use Imatrix</div><select class="form-select" id="quantize-use-imatrix"><option value="false">No (uniform quantization)</option><option value="true">Yes (compute imatrix first)</option></select></div>
+        </div>
+        <button id="btn-quantize" class="btn btn-primary btn-lg" disabled style="margin-top:16px;">Quantize Model →</button>
       </div>
     </section>
 

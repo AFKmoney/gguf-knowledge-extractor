@@ -21,6 +21,9 @@ const VIEW_META = {
   compare:   { title: 'Model Comparison', subtitle: 'Cross-model fingerprint lineage analysis' },
   surgery:   { title: 'GGUF Surgery', subtitle: 'Direct model modification without retraining' },
   merge:     { title: 'Model Merging', subtitle: 'SLERP, TIES, DARE, Linear — combine two models' },
+  transplant:{ title: 'Knowledge Transplant', subtitle: 'Extract knowledge from one model, inject into another' },
+  imatrix:   { title: 'Importance Matrix', subtitle: 'Compute which tensors matter more for smarter quantization' },
+  quantize:  { title: 'Smart Quantizer', subtitle: 'Compress GGUF models with optional imatrix guidance' },
   diff:      { title: 'GGUF Diff', subtitle: 'Compare two GGUFs at byte, metadata, and tensor level' },
   models:    { title: 'Hugging Face Hub', subtitle: 'Browse and download GGUF models' },
   job:       { title: 'Job Details', subtitle: 'Live progress and results' },
@@ -968,3 +971,85 @@ function startDownloadPolling() {
 // ---------------------------------------------------------------- //
 loadPacks();
 loadDashboard();
+
+// ---------------------------------------------------------------- //
+// v7: Imatrix
+// ---------------------------------------------------------------- //
+let imatrixFile = null;
+const imatrixDz = $('#imatrix-dropzone');
+const imatrixInput = $('#imatrix-file-input');
+if (imatrixDz) {
+  imatrixDz.onclick = () => imatrixInput.click();
+  imatrixDz.ondragover = (e) => { e.preventDefault(); imatrixDz.classList.add('drag-over'); };
+  imatrixDz.ondragleave = () => imatrixDz.classList.remove('drag-over');
+  imatrixDz.ondrop = (e) => { e.preventDefault(); imatrixDz.classList.remove('drag-over'); if (e.dataTransfer.files.length) { imatrixFile = e.dataTransfer.files[0]; $('#imatrix-selected-file').textContent = `✓ ${imatrixFile.name}`; $('#btn-imatrix').disabled = false; } };
+  imatrixInput.onchange = (e) => { if (e.target.files.length) { imatrixFile = e.dataTransfer.files[0]; $('#imatrix-selected-file').textContent = `✓ ${imatrixFile.name}`; $('#btn-imatrix').disabled = false; } };
+}
+$('#btn-imatrix')?.addEventListener('click', async () => {
+  if (!imatrixFile) return;
+  const fd = new FormData();
+  fd.append('file', imatrixFile);
+  $('#btn-imatrix').disabled = true; $('#btn-imatrix').textContent = 'Computing...';
+  try {
+    const res = await fetch('/api/imatrix', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail);
+    toast('Imatrix computation started', 'success');
+    navigateTo('job');
+    pollJob(data.job_id);
+  } catch (e) { toast('Failed: ' + e.message, 'error'); $('#btn-imatrix').disabled = false; $('#btn-imatrix').textContent = 'Compute Imatrix →'; }
+});
+
+// ---------------------------------------------------------------- //
+// v7: Quantize
+// ---------------------------------------------------------------- //
+let quantizeFile = null;
+const quantDz = $('#quantize-dropzone');
+const quantInput = $('#quantize-file-input');
+if (quantDz) {
+  quantDz.onclick = () => quantInput.click();
+  quantDz.ondragover = (e) => { e.preventDefault(); quantDz.classList.add('drag-over'); };
+  quantDz.ondragleave = () => quantDz.classList.remove('drag-over');
+  quantDz.ondrop = (e) => { e.preventDefault(); quantDz.classList.remove('drag-over'); if (e.dataTransfer.files.length) { quantizeFile = e.dataTransfer.files[0]; $('#quantize-selected-file').textContent = `✓ ${quantizeFile.name}`; $('#btn-quantize').disabled = false; } };
+  quantInput.onchange = (e) => { if (e.target.files.length) { quantizeFile = e.dataTransfer.files[0]; $('#quantize-selected-file').textContent = `✓ ${quantizeFile.name}`; $('#btn-quantize').disabled = false; } };
+}
+$('#btn-quantize')?.addEventListener('click', async () => {
+  if (!quantizeFile) return;
+  const fd = new FormData();
+  fd.append('file', quantizeFile);
+  fd.append('qtype', $('#quantize-qtype').value);
+  fd.append('use_imatrix', $('#quantize-use-imatrix').value === 'true');
+  $('#btn-quantize').disabled = true; $('#btn-quantize').textContent = 'Quantizing...';
+  try {
+    const res = await fetch('/api/quantize', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail);
+    toast('Quantization started', 'success');
+    navigateTo('job');
+    pollJob(data.job_id);
+  } catch (e) { toast('Failed: ' + e.message, 'error'); $('#btn-quantize').disabled = false; $('#btn-quantize').textContent = 'Quantize Model →'; }
+});
+
+// ---------------------------------------------------------------- //
+// v7: Transplant
+// ---------------------------------------------------------------- //
+$('#btn-transplant')?.addEventListener('click', async () => {
+  const source = $('#transplant-source').value.trim();
+  const target = $('#transplant-target').value.trim();
+  if (!source || !target) { toast('Provide both source and target paths', 'error'); return; }
+  const fd = new FormData();
+  fd.append('source', source);
+  fd.append('target', target);
+  fd.append('strategy', $('#transplant-strategy').value);
+  fd.append('strength', $('#transplant-strength').value);
+  fd.append('facts_file', $('#transplant-facts-file').value);
+  $('#btn-transplant').disabled = true; $('#btn-transplant').textContent = 'Transplanting...';
+  try {
+    const res = await fetch('/api/transplant', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail);
+    toast('Transplant started', 'success');
+    navigateTo('job');
+    pollJob(data.job_id);
+  } catch (e) { toast('Failed: ' + e.message, 'error'); $('#btn-transplant').disabled = false; $('#btn-transplant').textContent = 'Transplant Knowledge →'; }
+});

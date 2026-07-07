@@ -48,6 +48,9 @@ from gguf_knowledge_extractor.core.quant_surgery import QuantSurgeon
 from gguf_knowledge_extractor.core.model_merger import ModelMerger
 from gguf_knowledge_extractor.core.gguf_diff import GGUFDiffer
 from gguf_knowledge_extractor.core.activation_patcher import ActivationPatcher
+from gguf_knowledge_extractor.core.imatrix import ImatrixComputer
+from gguf_knowledge_extractor.core.quantizer import SmartQuantizer
+from gguf_knowledge_extractor.core.knowledge_transplant import KnowledgeTransplanter
 
 
 def cmd_extract(args):
@@ -819,6 +822,165 @@ def _load_fields_cli(reader):
     return fields
 
 
+def cmd_imatrix(args):
+    """v7: Compute importance matrix for a GGUF model."""
+    import gguf
+    print(f"[imatrix] GGUF: {args.gguf}")
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    reader = gguf.GGUFReader(args.gguf)
+    fields = _load_fields_cli(reader)
+    imputer = ImatrixComputer(reader, fields)
+    if not imputer.is_available():
+        print("[imatrix] ERROR: forward pass not available")
+        sys.exit(1)
+
+    def progress(msg, cur, total):
+        if total > 0:
+            print(f"[imatrix] [{cur}/{total}] {msg}")
+
+    report = imputer.compute(progress_cb=progress)
+    print(f"\n[imatrix] Done in {report.elapsed_seconds:.2f}s")
+    print(f"[imatrix] Tensors analyzed: {report.n_tensors_analyzed}")
+    print(f"[imatrix] Tokens processed: {report.n_tokens_processed}")
+    print(f"\n[imatrix] Top 10 most important tensors:")
+    for ti in report.tensor_importances[:10]:
+        rec = report.precision_recommendations.get(ti["name"], "?")
+        print(f"  {ti['name']:<40} importance={ti['importance_score']:.4f}  -> {rec}")
+
+    base = Path(args.gguf).stem
+    json_path = out_dir / f"{base}_imatrix.json"
+    with open(json_path, "w") as f:
+        json.dump(_to_jsonable_trace(report), f, indent=2, default=str)
+    print(f"\n[imatrix] Report: {json_path}")
+
+
+def cmd_quantize(args):
+    """v7: Quantize a GGUF model with optional imatrix."""
+    import os
+    print(f"[quantize] Source: {args.gguf}")
+    print(f"[quantize] Target: {args.qtype}")
+    print(f"[quantize] Use imatrix: {args.imatrix}")
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    base = Path(args.gguf).stem
+    output_path = out_dir / f"{base}_{args.qtype.lower()}.gguf"
+
+    # Load imatrix if specified
+    imatrix_report = None
+    if args.imatrix:
+        if args.imatrix_file:
+            print(f"[quantize] Loading imatrix from {args.imatrix_file}")
+            with open(args.imatrix_file) as f:
+                imatrix_report = json.load(f)
+        else:
+            print("[quantize] Computing imatrix from calibration prompts...")
+            import gguf
+            reader = gguf.GGUFReader(args.gguf)
+            fields = _load_fields_cli(reader)
+            imputer = ImatrixComputer(reader, fields)
+            if imputer.is_available():
+                imatrix_report_obj = imputer.compute()
+                imatrix_report = _to_jsonable_trace(imatrix_report_obj)
+
+    q = SmartQuantizer(args.gguf, imatrix_report=imatrix_report)
+    report = q.quantize(
+        str(output_path),
+        target_qtype=args.qtype,
+        use_imatrix=bool(imatrix_report),
+    )
+
+    print(f"\n[quantize] Done in {report.elapsed_seconds:.2f}s")
+    print(f"[quantize] Success: {report.success}")
+    if report.error:
+        print(f"[quantize] Error: {report.error[:500]}")
+    else:
+        print(f"[quantize] Output: {report.output_path}")
+        print(f"[quantize] Input size: {format_bytes(report.input_size_bytes)}")
+        print(f"[quantize] Output size: {format_bytes(report.output_size_bytes)}")
+        print(f"[quantize] Compression: {report.compression_ratio:.2f}x")
+        print(f"[quantize] Tensors quantized: {report.n_tensors_quantized}")
+        print(f"[quantize] Tensors kept high precision: {report.n_tensors_kept_high_precision}")
+        print(f"[quantize] Avg roundtrip error: {report.avg_roundtrip_error:.6f}")
+        print(f"[quantize] Max roundtrip error: {report.max_roundtrip_error:.6f}")
+
+    report_path = out_dir / f"{base}_{args.qtype.lower()}_report.json"
+    with open(report_path, "w") as f:
+        json.dump(_to_jsonable_trace(report), f, indent=2, default=str)
+    print(f"[quantize] Report: {report_path}")
+
+
+def cmd_transplant(args):
+    """v7: Transplant knowledge from source model to target model."""
+    print(f"[transplant] Source: {args.source}")
+    print(f"[transplant] Target: {args.target}")
+    print(f"[transplant] Strategy: {args.strategy}")
+    print(f"[transplant] Strength: {args.strength}")
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    output_path = out_dir / f"{Path(args.target).stem}_transplanted.gguf"
+
+    # Load facts from file or use default
+    if args.facts_file:
+        with open(args.facts_file) as f:
+            facts = json.load(f)
+    else:
+        # Use default fact probes
+        from gguf_knowledge_extractor.core.probes.base import list_default_packs
+        packs = list_default_packs()
+        facts = []
+        for pack in packs:
+            if pack.category == "facts":
+                for probe in pack.probes:
+                    facts.append({
+                        "probe_id": probe.id,
+                        "prompt": probe.prompt,
+                        "expected": probe.expected,
+                    })
+
+    print(f"[transplant] {len(facts)} facts to transplant")
+
+    transplanter = KnowledgeTransplanter(
+        source_path=args.source,
+        target_path=args.target,
+        target_output_path=str(output_path),
+    )
+    if not transplanter.is_available():
+        print("[transplant] ERROR: forward pass not available for one or both models")
+        sys.exit(1)
+
+    report = transplanter.transplant(
+        facts=facts,
+        strategy=args.strategy,
+        strength=args.strength,
+    )
+
+    print(f"\n[transplant] Done in {report.elapsed_seconds:.2f}s")
+    print(f"[transplant] Success: {report.success}")
+    if report.error:
+        print(f"[transplant] Error: {report.error[:500]}")
+    else:
+        print(f"[transplant] Facts extracted: {report.n_facts_extracted}")
+        print(f"[transplant] Facts transplanted: {report.n_facts_transplanted}")
+        print(f"[transplant] Successful: {report.n_successful}")
+        print(f"[transplant] Output: {report.output_model}")
+        print(f"\n[transplant] Layer mapping ({report.mapping_strategy}):")
+        for src, tgt in report.layer_mapping.items():
+            print(f"  {src} -> L{tgt}")
+        print(f"\n[transplant] Results (first 10):")
+        for r in report.results[:10]:
+            status = "✓" if r.get("transplant_successful") else "✗"
+            print(f"  {status} {r.get('probe_id','')}: L{r.get('source_layer','?')}N{r.get('source_neuron','?')} -> L{r.get('target_layer','?')}N{r.get('target_neuron','?')}")
+
+    report_path = out_dir / f"{Path(args.target).stem}_transplant_report.json"
+    with open(report_path, "w") as f:
+        json.dump(_to_jsonable_trace(report), f, indent=2, default=str)
+    print(f"\n[transplant] Report: {report_path}")
+
+
 def main():
     p = argparse.ArgumentParser(prog="gguf-knowledge-extractor", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -959,6 +1121,31 @@ def main():
     pmd.add_argument("--noise", type=float, default=1.0, help="Corruption noise std (default: 1.0)")
     pmd.add_argument("--out", default="./download")
     pmd.set_defaults(func=cmd_mediate)
+
+    # v7: imatrix
+    pim = sub.add_parser("imatrix", help="v7: Compute importance matrix for quantization calibration")
+    pim.add_argument("--gguf", required=True)
+    pim.add_argument("--out", default="./download")
+    pim.set_defaults(func=cmd_imatrix)
+
+    # v7: quantize
+    pqz = sub.add_parser("quantize", help="v7: Quantize GGUF with optional imatrix guidance")
+    pqz.add_argument("--gguf", required=True)
+    pqz.add_argument("--qtype", default="Q4_0", choices=SmartQuantizer.get_supported_qtypes())
+    pqz.add_argument("--imatrix", action="store_true", help="Use imatrix for per-tensor precision")
+    pqz.add_argument("--imatrix-file", help="Precomputed imatrix JSON file")
+    pqz.add_argument("--out", default="./download")
+    pqz.set_defaults(func=cmd_quantize)
+
+    # v7: transplant
+    ptp = sub.add_parser("transplant", help="v7: Transplant knowledge from source model to target model")
+    ptp.add_argument("--source", required=True, help="Source model (extract knowledge from)")
+    ptp.add_argument("--target", required=True, help="Target model (inject knowledge into)")
+    ptp.add_argument("--facts-file", help="JSON file with list of {probe_id, prompt, expected}")
+    ptp.add_argument("--strategy", default="scaled", choices=["same", "scaled"])
+    ptp.add_argument("--strength", type=float, default=1.0, help="0=blend, 1=full overwrite")
+    ptp.add_argument("--out", default="./download")
+    ptp.set_defaults(func=cmd_transplant)
 
     args = p.parse_args()
     args.func(args)

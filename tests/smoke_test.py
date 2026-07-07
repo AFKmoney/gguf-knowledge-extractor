@@ -84,6 +84,10 @@ def main() -> int:
          "v6 model merge (linear, identical models)"),
         ([*cli, "diff", str(gguf_path), str(gguf_path), "--out", str(work)],
          "v6 GGUF diff (identical models)"),
+        ([*cli, "imatrix", "--gguf", str(gguf_path), "--out", str(work)],
+         "v7 imatrix computation"),
+        ([*cli, "quantize", "--gguf", str(gguf_path), "--qtype", "Q8_0", "--out", str(work)],
+         "v7 quantization (Q8_0)"),
     ]
 
     failures = 0
