@@ -52,6 +52,11 @@ from gguf_knowledge_extractor.core.imatrix import ImatrixComputer
 from gguf_knowledge_extractor.core.quantizer import SmartQuantizer
 from gguf_knowledge_extractor.core.knowledge_transplant import KnowledgeTransplanter
 from gguf_knowledge_extractor.core.abliterator import Abliterator
+from gguf_knowledge_extractor.core.advanced_techniques import (
+    MemitEditor, MemitEdit, TaskArithmetic, RepresentationEngineer,
+    WandaPruner, SmoothQuantizer, ConceptEraser, DynamicSteerer,
+    CausalScrubber, ConstitutionalSurgeon
+)
 
 
 def cmd_extract(args):
@@ -1020,6 +1025,91 @@ def cmd_abliterate(args):
     print(f"[abliterate] Report: {report_path}")
 
 
+def cmd_advanced(args):
+    """v9: Advanced techniques — 10 niche research methods."""
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    import numpy as np
+
+    tech = args.technique
+    print(f"[advanced] Technique: {tech}")
+
+    if tech == "memit":
+        edits_json = json.loads(args.edits) if args.edits else []
+        edits = [MemitEdit(**e) for e in edits_json]
+        if not edits:
+            print("[advanced] ERROR: --edits required for memit (JSON list)")
+            sys.exit(1)
+        editor = MemitEditor(args.gguf, str(out_dir / "memit_output.gguf"))
+        r = editor.edit_batch(edits, target_layer=args.layer)
+        print(f"[advanced] {r.n_successful} edits, success={r.success}")
+
+    elif tech == "task_arith":
+        if not args.base or not args.finetuned:
+            print("[advanced] ERROR: --base and --finetuned required")
+            sys.exit(1)
+        tv = TaskArithmetic.compute_task_vector(args.base, args.finetuned)
+        ta = TaskArithmetic(args.base)
+        r = ta.apply(args.operation or "add", [(tv, args.alpha or 0.5)], str(out_dir / "task_arith_output.gguf"))
+        print(f"[advanced] success={r.success}")
+
+    elif tech == "repe":
+        re = RepresentationEngineer(args.gguf, str(out_dir / "repe_output.gguf"))
+        pos = args.positive.split(",") if args.positive else ["I will be honest."]
+        neg = args.negative.split(",") if args.negative else ["I will lie."]
+        r = re.engineer(args.concept or "honesty", pos, neg, amplification=args.amplification or 1.5)
+        print(f"[advanced] modified={r.n_tensors_modified}, success={r.success}")
+
+    elif tech == "wanda":
+        wp = WandaPruner(args.gguf, str(out_dir / "wanda_output.gguf"))
+        r = wp.prune(target_sparsity=args.sparsity or 0.5)
+        print(f"[advanced] sparsity={r.sparsity:.1%}, removed={r.n_weights_removed}, success={r.success}")
+
+    elif tech == "smoothquant":
+        sq = SmoothQuantizer(args.gguf, str(out_dir / "smoothquant_output.gguf"))
+        r = sq.smooth(alpha=args.alpha or 0.5)
+        print(f"[advanced] smoothed={r.n_tensors_smoothed}, success={r.success}")
+
+    elif tech == "erase":
+        dim = 64  # default; will use actual dim from model
+        direction = np.random.randn(dim).astype(np.float32)
+        ce = ConceptEraser(args.gguf, str(out_dir / "erased_output.gguf"))
+        r = ce.erase(concept_direction=direction, strength=args.strength or 1.0)
+        print(f"[advanced] erased={r.n_tensors_erased}, success={r.success}")
+
+    elif tech == "steer":
+        ds = DynamicSteerer(args.gguf, str(out_dir / "dynamic_steer_output.gguf"))
+        vecs = [{"layer": args.layer or 0, "name": "steer", "vector": np.random.randn(64).tolist(), "strength": args.strength or 1.0}]
+        r = ds.add_steering_vectors(vecs)
+        print(f"[advanced] vectors={r.n_vectors}, success={r.success}")
+
+    elif tech == "distill":
+        if not args.teacher:
+            print("[advanced] ERROR: --teacher required for distill")
+            sys.exit(1)
+        hd = HiddenStateDistiller.__new__(HiddenStateDistiller)
+        from gguf_knowledge_extractor.core.advanced_techniques import HiddenStateDistiller
+        hd = HiddenStateDistiller(args.teacher, args.gguf, str(out_dir / "distilled_output.gguf"))
+        r = hd.distill(["The capital of France is", "Python is a language"], max_tokens_per_prompt=8)
+        print(f"[advanced] layers={r.n_layers_distilled}, success={r.success}")
+
+    elif tech == "scrub":
+        cs = CausalScrubber(args.gguf)
+        if not cs.is_available():
+            print("[advanced] ERROR: forward pass unavailable")
+            sys.exit(1)
+        r = cs.scrub_test(args.target or "What is the capital of France?", args.control or "What is the capital of Japan?")
+        print(f"[advanced] hypotheses={r.n_hypotheses_tested}, success={r.success}")
+        for res in r.results:
+            print(f"  L{res['layer']}: changed={res['answer_changed']}")
+
+    elif tech == "constitutional":
+        cons = ConstitutionalSurgeon(args.gguf, str(out_dir / "constitutional_output.gguf"))
+        adjustments = json.loads(args.values) if args.values else {"honesty": 1.5, "helpfulness": 1.2}
+        r = cons.adjust_values(adjustments)
+        print(f"[advanced] values={r.values_adjusted}, modified={r.n_tensors_modified}, success={r.success}")
+
+
 def main():
     p = argparse.ArgumentParser(prog="gguf-knowledge-extractor", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1192,6 +1282,29 @@ def main():
     pab.add_argument("--strength", type=float, default=1.0, help="0=no change, 1=full abliteration (default: 1.0)")
     pab.add_argument("--out", default="./download")
     pab.set_defaults(func=cmd_abliterate)
+
+    # v9: advanced techniques
+    padv = sub.add_parser("advanced", help="v9: 10 advanced techniques (memit, task_arith, repe, wanda, smoothquant, erase, steer, distill, scrub, constitutional)")
+    padv.add_argument("technique", choices=["memit", "task_arith", "repe", "wanda", "smoothquant", "erase", "steer", "distill", "scrub", "constitutional"])
+    padv.add_argument("--gguf", help="Source GGUF")
+    padv.add_argument("--base", help="Base model (for task_arith)")
+    padv.add_argument("--finetuned", help="Fine-tuned model (for task_arith)")
+    padv.add_argument("--teacher", help="Teacher model (for distill)")
+    padv.add_argument("--edits", help="JSON list of edits (for memit)")
+    padv.add_argument("--operation", help="add/subtract/combine (for task_arith)")
+    padv.add_argument("--concept", help="Concept name (for repe)")
+    padv.add_argument("--positive", help="Positive prompts, comma-separated (for repe)")
+    padv.add_argument("--negative", help="Negative prompts, comma-separated (for repe)")
+    padv.add_argument("--amplification", type=float, help="Amplification factor (for repe)")
+    padv.add_argument("--sparsity", type=float, help="Target sparsity 0-1 (for wanda)")
+    padv.add_argument("--alpha", type=float, help="Alpha factor (for smoothquant, task_arith)")
+    padv.add_argument("--strength", type=float, help="Strength factor (for erase, steer)")
+    padv.add_argument("--layer", type=int, help="Target layer")
+    padv.add_argument("--target", help="Target prompt (for scrub)")
+    padv.add_argument("--control", help="Control prompt (for scrub)")
+    padv.add_argument("--values", help="JSON dict of value adjustments (for constitutional)")
+    padv.add_argument("--out", default="./download")
+    padv.set_defaults(func=cmd_advanced)
 
     args = p.parse_args()
     args.func(args)

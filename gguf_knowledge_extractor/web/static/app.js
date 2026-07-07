@@ -23,6 +23,7 @@ const VIEW_META = {
   merge:     { title: 'Model Merging', subtitle: 'SLERP, TIES, DARE, Linear — combine two models' },
   transplant:{ title: 'Knowledge Transplant', subtitle: 'Extract knowledge from one model, inject into another' },
   abliterate:{ title: 'Abliteration', subtitle: 'Remove refusal behavior — create uncensored models without retraining' },
+  advanced:  { title: 'Advanced Techniques', subtitle: '10 niche research methods: MEMIT, Task Arithmetic, RepE, Wanda, SmoothQuant, LEACE, Steering, Distillation, Causal Scrubbing, Constitutional AI' },
   imatrix:   { title: 'Importance Matrix', subtitle: 'Compute which tensors matter more for smarter quantization' },
   quantize:  { title: 'Smart Quantizer', subtitle: 'Compress GGUF models with optional imatrix guidance' },
   diff:      { title: 'GGUF Diff', subtitle: 'Compare two GGUFs at byte, metadata, and tensor level' },
@@ -1083,3 +1084,65 @@ $('#btn-abliterate')?.addEventListener('click', async () => {
     pollJob(data.job_id);
   } catch (e) { toast('Failed: ' + e.message, 'error'); $('#btn-abliterate').disabled = false; $('#btn-abliterate').textContent = 'Abliterate Model →'; }
 });
+
+// ---------------------------------------------------------------- //
+// v9: Advanced Techniques
+// ---------------------------------------------------------------- //
+let advancedFile = null;
+const advDz = $('#advanced-dropzone');
+const advInput = $('#advanced-file-input');
+if (advDz) {
+  advDz.onclick = () => advInput.click();
+  advDz.ondragover = (e) => { e.preventDefault(); advDz.classList.add('drag-over'); };
+  advDz.ondragleave = () => advDz.classList.remove('drag-over');
+  advDz.ondrop = (e) => { e.preventDefault(); advDz.classList.remove('drag-over'); if (e.dataTransfer.files.length) { advancedFile = e.dataTransfer.files[0]; $('#advanced-selected-file').textContent = `✓ ${advancedFile.name}`; $('#btn-advanced').disabled = false; } };
+  advInput.onchange = (e) => { if (e.target.files.length) { advancedFile = e.target.files[0]; $('#advanced-selected-file').textContent = `✓ ${advancedFile.name}`; $('#btn-advanced').disabled = false; } };
+}
+$('#btn-advanced')?.addEventListener('click', async () => {
+  if (!advancedFile) return;
+  const technique = $('#advanced-technique').value;
+  const params = {};
+  // Collect technique-specific params
+  $('#advanced-params').querySelectorAll('[data-param]').forEach(inp => {
+    const key = inp.dataset.param;
+    let val = inp.value;
+    if (inp.type === 'number') val = parseFloat(val);
+    if (key === 'positive' || key === 'negative' || key === 'edits' || key === 'values') {
+      try { val = JSON.parse(val); } catch { val = val.split(','); }
+    }
+    params[key] = val;
+  });
+  const fd = new FormData();
+  fd.append('file', advancedFile);
+  fd.append('technique', technique);
+  fd.append('params', JSON.stringify(params));
+  $('#btn-advanced').disabled = true; $('#btn-advanced').textContent = 'Running...';
+  try {
+    const res = await fetch('/api/advanced', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail);
+    toast(`${technique} started`, 'success');
+    navigateTo('job');
+    pollJob(data.job_id);
+  } catch (e) { toast('Failed: ' + e.message, 'error'); $('#btn-advanced').disabled = false; $('#btn-advanced').textContent = 'Run Technique →'; }
+});
+
+// Dynamic params UI based on technique
+$('#advanced-technique')?.addEventListener('change', renderAdvancedParams);
+function renderAdvancedParams() {
+  const tech = $('#advanced-technique').value;
+  const container = $('#advanced-params');
+  if (!container) return;
+  const params = {
+    wanda: '<div class="form-row"><div class="form-group"><div class="form-label">Target Sparsity (0-1)</div><input type="number" class="form-input" data-param="sparsity" value="0.5" step="0.1" min="0" max="0.9" /></div></div>',
+    smoothquant: '<div class="form-row"><div class="form-group"><div class="form-label">Alpha (0-1)</div><input type="number" class="form-input" data-param="alpha" value="0.5" step="0.1" min="0" max="1" /></div></div>',
+    repe: '<div class="form-row"><div class="form-group"><div class="form-label">Concept Name</div><input type="text" class="form-input" data-param="concept" value="honesty" /></div><div class="form-group"><div class="form-label">Amplification (0=suppress, 2=amplify)</div><input type="number" class="form-input" data-param="amplification" value="1.5" step="0.1" /></div></div>',
+    constitutional: '<div class="form-row"><div class="form-group"><div class="form-label">Values JSON (e.g. {"honesty":1.5,"creativity":0.8})</div><input type="text" class="form-input" data-param="values" value=\'{"honesty":1.5,"helpfulness":1.2}\' /></div></div>',
+    erase: '<div class="form-row"><div class="form-group"><div class="form-label">Strength (0-1)</div><input type="number" class="form-input" data-param="strength" value="1.0" step="0.1" min="0" max="1" /></div></div>',
+    steer: '<div class="form-row"><div class="form-group"><div class="form-label">Layer</div><input type="number" class="form-input" data-param="layer" value="0" min="0" /></div><div class="form-group"><div class="form-label">Strength</div><input type="number" class="form-input" data-param="strength" value="1.0" step="0.1" /></div></div>',
+    scrub: '<div class="form-row"><div class="form-group"><div class="form-label">Target Prompt</div><input type="text" class="form-input" data-param="target" value="What is the capital of France?" /></div><div class="form-group"><div class="form-label">Control Prompt</div><input type="text" class="form-input" data-param="control" value="What is the capital of Japan?" /></div></div>',
+    memit: '<div class="form-row"><div class="form-group"><div class="form-label">Edits JSON</div><input type="text" class="form-input" data-param="edits" value=\'[{"subject":"France","prompt":"What is the capital of France?","target_object":"Tokyo"}]\' /></div><div class="form-group"><div class="form-label">Target Layer</div><input type="number" class="form-input" data-param="layer" value="1" /></div></div>',
+  };
+  container.innerHTML = params[tech] || '';
+}
+renderAdvancedParams();

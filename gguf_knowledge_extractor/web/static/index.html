@@ -77,6 +77,11 @@
         Abliterate
         <span class="nav-badge">v8</span>
       </a>
+      <a href="#" class="nav-item" data-view="advanced">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.6 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        Advanced
+        <span class="nav-badge">v9</span>
+      </a>
       <a href="#" class="nav-item" data-view="diff">
         <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3v6m0 6v6M3 12h6m6 0h6"/><circle cx="12" cy="12" r="3"/></svg>
         Diff
@@ -656,6 +661,41 @@
           <div class="form-group"><div class="form-label">Strength (0=no change, 1=full abliteration)</div><input type="number" class="form-input" id="abliterate-strength" value="1.0" step="0.1" min="0" max="2" /></div>
         </div>
         <button id="btn-abliterate" class="btn btn-primary btn-lg" disabled style="margin-top:16px;">Abliterate Model →</button>
+      </div>
+    </section>
+
+    <!-- ====== Advanced View ====== -->
+    <section id="view-advanced" class="view">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.6 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>Advanced Techniques — 10 Niche Research Methods</div>
+            <div class="card-subtitle">MEMIT, Task Arithmetic, RepE, Wanda, SmoothQuant, Concept Erasure, Dynamic Steering, Distillation, Causal Scrubbing, Constitutional AI</div>
+          </div>
+        </div>
+        <div class="dropzone" id="advanced-dropzone">
+          <input type="file" id="advanced-file-input" accept=".gguf" hidden />
+          <div class="dropzone-icon"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="24" height="24"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6M4.22 4.22l4.24 4.24m7.08 7.08l4.24 4.24M1 12h6m6 0h6M4.22 19.78l4.24-4.24m7.08-7.08l4.24-4.24"/></svg></div>
+          <div class="dropzone-text">Drop a .gguf file</div>
+          <div class="dropzone-hint">Choose a technique below and run</div>
+        </div>
+        <p class="form-hint" id="advanced-selected-file" style="margin-top:12px;"></p>
+        <div class="form-row" style="margin-top:16px;">
+          <div class="form-group"><div class="form-label">Technique</div>
+            <select class="form-select" id="advanced-technique">
+              <option value="wanda">Wanda Pruning (50% weights off)</option>
+              <option value="smoothquant">SmoothQuant (outlier smoothing)</option>
+              <option value="repe">Representation Engineering (control concepts)</option>
+              <option value="constitutional">Constitutional AI (adjust values)</option>
+              <option value="erase">Concept Erasure (LEACE)</option>
+              <option value="steer">Dynamic Steering (runtime, reversible)</option>
+              <option value="scrub">Causal Scrubbing (hypothesis testing)</option>
+              <option value="memit">MEMIT (batch fact editing)</option>
+            </select>
+          </div>
+        </div>
+        <div id="advanced-params"></div>
+        <button id="btn-advanced" class="btn btn-primary btn-lg" disabled style="margin-top:16px;">Run Technique →</button>
       </div>
     </section>
 

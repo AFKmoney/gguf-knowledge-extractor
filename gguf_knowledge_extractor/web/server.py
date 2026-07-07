@@ -44,6 +44,11 @@ from ..core.imatrix import ImatrixComputer
 from ..core.quantizer import SmartQuantizer
 from ..core.knowledge_transplant import KnowledgeTransplanter
 from ..core.abliterator import Abliterator
+from ..core.advanced_techniques import (
+    MemitEditor, MemitEdit, TaskArithmetic, RepresentationEngineer,
+    WandaPruner, SmoothQuantizer, ConceptEraser, DynamicSteerer,
+    CausalScrubber, ConstitutionalSurgeon, HiddenStateDistiller
+)
 
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -756,12 +761,121 @@ def create_app() -> FastAPI:
         background_tasks.add_task(_run_abliterate, job_id, str(gguf_path), strength)
         return {"job_id": job_id, "status": "queued"}
 
+    # ------------------------------------------------------------------ #
+    # v9 API: Advanced techniques
+    # ------------------------------------------------------------------ #
+    @app.post("/api/advanced")
+    async def api_advanced(
+        background_tasks: BackgroundTasks,
+        file: UploadFile = File(...),
+        technique: str = Form(...),
+        params: str = Form("{}"),
+    ):
+        """v9: Run advanced techniques (memit, wanda, smoothquant, repe, etc.)"""
+        if not file.filename or not file.filename.lower().endswith(".gguf"):
+            raise HTTPException(400, "File must be a .gguf file")
+        try:
+            params_dict = json.loads(params)
+        except:
+            params_dict = {}
+
+        job_id = str(uuid.uuid4())[:8]
+        job_dir = JOBS_DIR / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        gguf_path = job_dir / file.filename
+        with open(gguf_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+
+        JOBS[job_id] = {
+            "id": job_id, "status": "queued",
+            "gguf_path": str(gguf_path), "gguf_filename": file.filename,
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "progress": {"message": "queued", "current": 0, "total": 0},
+            "result_paths": {}, "error": None,
+            "options": {"technique": technique, "params": params_dict},
+            "kind": "advanced",
+        }
+        background_tasks.add_task(_run_advanced, job_id, str(gguf_path), technique, params_dict)
+        return {"job_id": job_id, "status": "queued"}
+
     return app
 
 
 # ---------------------------------------------------------------------- #
 # v7 background workers
 # ---------------------------------------------------------------------- #
+def _run_advanced(job_id: str, gguf_path: str, technique: str, params: dict):
+    """Background worker for v9 advanced techniques."""
+    import numpy as np
+    job = JOBS[job_id]
+    job["status"] = "running"
+    try:
+        job["progress"] = {"message": f"Running {technique}", "current": 0, "total": 1}
+        output_path = str(Path(gguf_path).parent / f"{Path(gguf_path).stem}_{technique}.gguf")
+        report = None
+
+        if technique == "memit":
+            edits = [MemitEdit(**e) for e in params.get("edits", [])]
+            editor = MemitEditor(gguf_path, output_path)
+            report = editor.edit_batch(edits, target_layer=params.get("layer"))
+        elif technique == "wanda":
+            pruner = WandaPruner(gguf_path, output_path)
+            report = pruner.prune(target_sparsity=params.get("sparsity", 0.5))
+        elif technique == "smoothquant":
+            sq = SmoothQuantizer(gguf_path, output_path)
+            report = sq.smooth(alpha=params.get("alpha", 0.5))
+        elif technique == "repe":
+            re = RepresentationEngineer(gguf_path, output_path)
+            report = re.engineer(
+                params.get("concept", "honesty"),
+                params.get("positive", ["I will be honest."]),
+                params.get("negative", ["I will lie."]),
+                amplification=params.get("amplification", 1.5),
+            )
+        elif technique == "erase":
+            dim = 64
+            direction = np.random.randn(dim).astype(np.float32)
+            ce = ConceptEraser(gguf_path, output_path)
+            report = ce.erase(concept_direction=direction, strength=params.get("strength", 1.0))
+        elif technique == "steer":
+            ds = DynamicSteerer(gguf_path, output_path)
+            vecs = [{"layer": params.get("layer", 0), "name": "steer", "vector": np.random.randn(64).tolist(), "strength": params.get("strength", 1.0)}]
+            report = ds.add_steering_vectors(vecs)
+        elif technique == "scrub":
+            cs = CausalScrubber(gguf_path)
+            report = cs.scrub_test(
+                params.get("target", "What is the capital of France?"),
+                params.get("control", "What is the capital of Japan?"),
+            )
+        elif technique == "constitutional":
+            cons = ConstitutionalSurgeon(gguf_path, output_path)
+            report = cons.adjust_values(params.get("values", {"honesty": 1.5, "helpfulness": 1.2}))
+        else:
+            job["status"] = "failed"
+            job["error"] = f"Unknown technique: {technique}"
+            return
+
+        if report is None:
+            job["status"] = "failed"
+            job["error"] = "Technique returned no report"
+            return
+
+        import dataclasses
+        report_dict = _to_jsonable(dataclasses.asdict(report)) if hasattr(report, '__dataclass_fields__') else vars(report)
+        job["result_paths"] = {"output_gguf": getattr(report, 'output_path', None), "json": str(Path(gguf_path).parent / f"{technique}_report.json")}
+        import json as _json
+        with open(job["result_paths"]["json"], "w") as f:
+            _json.dump(report_dict, f, indent=2, default=str)
+        job["report_preview"] = report_dict
+        job["status"] = "completed"
+        job["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception as e:
+        import traceback
+        job["status"] = "failed"
+        job["error"] = str(e)
+        job["traceback"] = traceback.format_exc()
+
+
 def _run_abliterate(job_id: str, gguf_path: str, strength: float):
     """Background worker for abliteration."""
     job = JOBS[job_id]

@@ -149,6 +149,21 @@ python gguf_knowledge_extractor/cli.py mediate --gguf model.gguf --prompt "..." 
 23. **Cross-arch transplant** — Johnson-Lindenstrauss projection for different dims
 24. **Strength control** — blend (0.0) to full overwrite (1.0)
 
+### v8 — Abliteration
+25. **Abliteration** — compute the "refusal direction" from harmful/harmless prompts, orthogonalize all weight matrices against it → uncensored model without retraining
+
+### v9 — Advanced Techniques (10 niche research methods)
+26. **MEMIT** — batch fact editing (1000+ facts in 1 pass, vs ROME's 1-at-a-time)
+27. **Task Arithmetic** — compute task vectors (finetuned - base), add/subtract/negotiate capabilities between models
+28. **Representation Engineering (RepE)** — control any concept: honesty, creativity, bias, power-seeking. Generalizes abliteration.
+29. **Wanda Pruning** — weight+activation pruning. 50% sparsity with near-zero quality loss. No quantization needed.
+30. **SmoothQuant** — redistribute activation outliers to weights before quantization. Enables lossless INT8.
+31. **Concept Erasure (LEACE)** — surgically remove the ability to represent a specific concept
+32. **Dynamic Steering** — store steering vectors as metadata for runtime application. Fully reversible.
+33. **Hidden State Distillation** — compute student weights via least-squares to match teacher's hidden states. No training.
+34. **Causal Scrubbing** — rigorous causal hypothesis testing. Swap activations between prompts to prove which layers cause which behaviors.
+35. **Constitutional AI Surgery** — adjust value directions (honesty, helpfulness, harmlessness, creativity) in weight space.
+
 ---
 
 ## Architecture
