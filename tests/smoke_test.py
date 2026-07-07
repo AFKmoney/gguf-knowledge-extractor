@@ -79,6 +79,11 @@ def main() -> int:
           "--system-prompt", "Test surgery prompt",
           "--set-meta", "general.custom:string:tested"],
          "v5 GGUF surgery (system prompt + metadata)"),
+        ([*cli, "merge", str(gguf_path), str(gguf_path), "--algorithm", "linear", "--alpha", "0.5",
+          "--out", str(work)],
+         "v6 model merge (linear, identical models)"),
+        ([*cli, "diff", str(gguf_path), str(gguf_path), "--out", str(work)],
+         "v6 GGUF diff (identical models)"),
     ]
 
     failures = 0

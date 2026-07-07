@@ -33,6 +33,12 @@ A hybrid extraction tool that cracks open a GGUF file in two complementary ways:
 19. **Patch tensors** — overwrite arbitrary slices of any F32/F16 tensor.
 20. **Set/remove metadata** — add, modify, or delete any KV metadata field.
 
+**v6 adds model merging, diffing, and causal mediation analysis:**
+21. **Model merging** — merge two GGUF models using 4 algorithms: Linear, SLERP, TIES, DARE. Combine base + fine-tune, or two fine-tunes with different capabilities.
+22. **Quantized surgery** — dequant→patch→requant for Q4_0, Q4_1, Q5_0, Q5_1, Q8_0 tensors. K-quants (Q4_K etc.) fall back to F16.
+23. **GGUF diff** — compare two GGUFs at byte, metadata, and tensor level. Per-tensor cosine similarity, mean abs diff, and overall similarity score.
+24. **Causal mediation analysis** — true activation patching (corrupt + restore) to find which layer causally stores a fact. The gold-standard method from the ROME paper.
+
 ## What gets extracted
 
 | Knowledge type | How | Output |
@@ -118,6 +124,18 @@ python gguf_knowledge_extractor/cli.py surgery --gguf model.gguf --out ./out/ \
 # v5: Surgery from operations JSON file
 python gguf_knowledge_extractor/cli.py surgery --gguf model.gguf --out ./out/ \
     --operations-file surgery_ops.json
+
+# v6: Merge two models (4 algorithms)
+python gguf_knowledge_extractor/cli.py merge model_a.gguf model_b.gguf \
+    --algorithm slerp --alpha 0.5 --out ./out/
+#   algorithms: linear, slerp, ties, dare
+
+# v6: Diff two GGUFs
+python gguf_knowledge_extractor/cli.py diff model_a.gguf model_b.gguf --out ./out/
+
+# v6: Causal mediation analysis (activation patching)
+python gguf_knowledge_extractor/cli.py mediate --gguf model.gguf \
+    --prompt "The Eiffel Tower is located in" --expected " Paris" --out ./out/
 
 # Full extraction (metadata + weights + all probes + v2 attribution)
 python gguf_knowledge_extractor/cli.py extract \
@@ -277,7 +295,7 @@ probes:
 ```
 gguf_knowledge_extractor/
 ├── __init__.py
-├── cli.py                              # CLI entry point (10 subcommands)
+├── cli.py                              # CLI entry point (14 subcommands)
 ├── core/
 │   ├── gguf_parser.py                  # Reads metadata via gguf-py
 │   ├── weight_inspector.py             # Tensor statistics & embedding analysis
@@ -290,6 +308,10 @@ gguf_knowledge_extractor/
 │   ├── fingerprint_compare.py          # v3: cross-model lineage comparison
 │   ├── model_manager.py                # v4: Hugging Face Hub browser & downloader
 │   ├── gguf_surgeon.py                 # v5: direct GGUF surgery (7 operations)
+│   ├── quant_surgery.py                # v6: quantized tensor surgery (dequant→patch→requant)
+│   ├── model_merger.py                 # v6: model merging (SLERP, TIES, DARE, Linear)
+│   ├── gguf_diff.py                    # v6: GGUF diff (byte, metadata, tensor level)
+│   ├── activation_patcher.py           # v6: causal mediation analysis (activation patching)
 │   ├── extractor.py                    # Top-level orchestrator
 │   ├── inference/
 │   │   └── base.py                     # ServerBackend / PythonBackend / AutoBackend
@@ -301,7 +323,7 @@ gguf_knowledge_extractor/
 │       ├── graph_exporter.py           # GraphML + RDF/Turtle (with attribution nodes)
 │       └── sqlite_exporter.py          # 9 + 5 v2 tables = 14 tables total
 └── web/
-    ├── server.py                       # FastAPI app (v1-v5 endpoints)
+    ├── server.py                       # FastAPI app (v1-v6 endpoints)
     └── static/
         ├── index.html                  # 9 views: extract, trace, edit, compare, models, surgery, jobs, packs, backends
         ├── style.css
@@ -312,7 +334,7 @@ scripts/
     ├── make_test_gguf.py               # Generates a tiny test GGUF (full Llama arch)
     └── start_web_ui.py
 tests/
-    └── smoke_test.py                   # End-to-end test of all 10 CLI subcommands
+    └── smoke_test.py                   # End-to-end test of all 14 CLI subcommands
 ```
 
 ## v2 SQLite schema (attribution tables)
@@ -372,6 +394,9 @@ This generates a tiny 3-layer Llama-arch GGUF (450KB), runs all 8 CLI subcommand
 - **v5 dataset injection** embeds data as JSON metadata. The model doesn't automatically "know" about this data — you need to prompt it to access the injected dataset (or use a custom inference engine that reads the metadata). The dataset is stored under `general.injected_dataset.<name>` as a JSON string.
 - **v5 steering vectors** are stored as custom tensors (`blk.{layer}.steering.{name}.weight`). Standard inference engines (llama.cpp) will ignore them. A custom inference engine that reads and applies these vectors after each layer is needed to activate them.
 - **v5 vocabulary extension** adds new tokens with zero (or provided) embeddings. Zero-embedding tokens will be inert until their embeddings are filled via ROME editing or other weight surgery. The token_embd matrix is extended in-place.
+- **v6 quantized surgery** supports full roundtrip (dequant→patch→requant) for Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, F16, F32, BF16. K-quants (Q4_K, Q5_K, Q6_K, Q2_K, Q3_K, Q8_K) can be dequantized for analysis but cannot be requantized (gguf-py doesn't implement K-quant quantization) — they fall back to F16 output, which increases file size but preserves the edit.
+- **v6 model merging** requires both models to have the same architecture and tensor shapes. Different vocab sizes are not supported (use surgery to align vocabs first). The merged model inherits model A's metadata.
+- **v6 causal mediation** runs n+1 forward passes per fact (1 clean + 1 corrupt + n_layer restorations). For a 32-layer model on a short prompt, this takes ~30-60 seconds on CPU. Requires Llama-arch only.
 
 ## License
 

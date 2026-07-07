@@ -44,6 +44,10 @@ from gguf_knowledge_extractor.core.rome_editor import RomeEditor, EditRequest
 from gguf_knowledge_extractor.core.fingerprint_compare import FingerprintComparator
 from gguf_knowledge_extractor.core.model_manager import ModelManager, format_bytes
 from gguf_knowledge_extractor.core.gguf_surgeon import GGUFSurgeon, surgery_session
+from gguf_knowledge_extractor.core.quant_surgery import QuantSurgeon
+from gguf_knowledge_extractor.core.model_merger import ModelMerger
+from gguf_knowledge_extractor.core.gguf_diff import GGUFDiffer
+from gguf_knowledge_extractor.core.activation_patcher import ActivationPatcher
 
 
 def cmd_extract(args):
@@ -651,6 +655,170 @@ def cmd_surgery(args):
     print(f"[surgery] Report: {report_path}")
 
 
+def cmd_merge(args):
+    """v6: Merge two GGUF models (linear, SLERP, TIES, DARE)."""
+    print(f"[merge] Algorithm: {args.algorithm}")
+    print(f"[merge] Model A: {args.model_a}")
+    print(f"[merge] Model B: {args.model_b}")
+    print(f"[merge] Alpha: {args.alpha}")
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    output_path = out_dir / f"merged_{args.algorithm}.gguf"
+
+    merger = ModelMerger(args.model_a, args.model_b)
+    report = merger.merge(
+        str(output_path),
+        algorithm=args.algorithm,
+        alpha=args.alpha,
+        tensor_filter=args.filter,
+    )
+
+    print(f"\n[merge] Done in {report.elapsed_seconds:.2f}s")
+    print(f"[merge] Success: {report.success}")
+    if report.error:
+        print(f"[merge] Error: {report.error[:500]}")
+    else:
+        print(f"[merge] Output: {report.output_path}")
+        print(f"[merge] Tensors merged: {report.n_tensors_merged}")
+        print(f"[merge] Tensors skipped: {report.n_tensors_skipped}")
+
+    report_path = out_dir / f"merged_{args.algorithm}_report.json"
+    with open(report_path, "w") as f:
+        json.dump(_to_jsonable_trace(report), f, indent=2, default=str)
+    print(f"[merge] Report: {report_path}")
+
+
+def cmd_diff(args):
+    """v6: Diff two GGUF files."""
+    print(f"[diff] Model A: {args.model_a}")
+    print(f"[diff] Model B: {args.model_b}")
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    differ = GGUFDiffer(args.model_a, args.model_b)
+    report = differ.diff()
+
+    print(f"\n[diff] Done in {report.elapsed_seconds:.2f}s")
+    print(f"[diff] File sizes: {format_bytes(report.file_size_a)} vs {format_bytes(report.file_size_b)}")
+    print(f"[diff] Tensors: {report.n_tensors_a} vs {report.n_tensors_b}")
+    print(f"[diff] Summary:")
+    print(f"  Same: {report.summary['n_tensors_same']}")
+    print(f"  Modified: {report.summary['n_tensors_modified']}")
+    print(f"  Added: {report.summary['n_tensors_added']}")
+    print(f"  Removed: {report.summary['n_tensors_removed']}")
+    print(f"  Avg cosine similarity: {report.summary['avg_cosine_similarity']:.4f}")
+    print(f"  Overall similarity: {report.summary['overall_similarity_percent']:.1f}%")
+
+    # Show top 10 most different tensors
+    modified = [t for t in report.tensor_diffs if t["status"] == "modified"]
+    modified.sort(key=lambda t: t.get("f32_cosine_sim", 1.0))
+    if modified:
+        print(f"\n[diff] Top 10 most different tensors:")
+        for t in modified[:10]:
+            cos = t.get("f32_cosine_sim", 0)
+            print(f"  {t['name']}: cos_sim={cos:.4f}, mean_diff={t.get('f32_mean_abs_diff', 0):.4f}")
+
+    report_path = out_dir / "diff_report.json"
+    with open(report_path, "w") as f:
+        json.dump(_to_jsonable_trace(report), f, indent=2, default=str)
+    print(f"\n[diff] Report: {report_path}")
+
+
+def cmd_mediate(args):
+    """v6: Causal mediation analysis (activation patching)."""
+    import gguf
+    print(f"[mediate] GGUF: {args.gguf}")
+    print(f"[mediate] Prompt: {args.prompt}")
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    reader = gguf.GGUFReader(args.gguf)
+    fields = _load_fields_cli(reader)
+
+    patcher = ActivationPatcher(reader, fields)
+    if not patcher.is_available():
+        print("[mediate] ERROR: forward pass not available")
+        sys.exit(1)
+
+    report = patcher.analyze(
+        probe_id="cli_mediate",
+        prompt=args.prompt,
+        expected_answer=args.expected,
+        corruption_noise_std=args.noise,
+    )
+
+    print(f"\n[mediate] Done in {report.elapsed_seconds:.2f}s")
+    print(f"[mediate] Method: {report.method}")
+    print(f"[mediate] Clean prediction: '{report.clean_prediction}'")
+    print(f"[mediate] Corrupt prediction: '{report.corrupt_prediction}'")
+    print(f"[mediate] Best layer: {report.best_layer} (causal effect: {report.best_causal_effect:.6f})")
+    print(f"\n[mediate] Per-layer results:")
+    for lr in report.layer_results:
+        print(f"  L{lr['layer']}: effect={lr['causal_effect']:+.6f}  "
+              f"clean={lr['clean_answer_prob_clean']:.4f}  "
+              f"corrupt={lr['clean_answer_prob_corrupt']:.4f}  "
+              f"restored={lr['clean_answer_prob_restored']:.4f}  "
+              f"top1: {lr['clean_top1_token']} -> {lr['corrupt_top1_token']} -> {lr['restored_top1_token']}")
+
+    report_path = out_dir / "mediation_report.json"
+    with open(report_path, "w") as f:
+        json.dump(_to_jsonable_trace(report), f, indent=2, default=str)
+    print(f"\n[mediate] Report: {report_path}")
+
+
+def _load_fields_cli(reader):
+    """Load GGUF metadata fields into a plain dict (shared by trace/mediate)."""
+    import gguf
+    fields = {}
+    for fname in reader.fields.keys():
+        if fname.startswith("GGUF."):
+            continue
+        try:
+            f = reader.get_field(fname)
+            is_array = (len(f.types) >= 1 and int(f.types[0]) == 9)
+            if is_array:
+                elem_type = int(f.types[1]) if len(f.types) >= 2 else 8
+                value = []
+                if elem_type == 8:
+                    for i in range(len(f.data)):
+                        try:
+                            value.append(bytes(f.parts[f.data[i]]).decode("utf-8", errors="replace"))
+                        except:
+                            pass
+                else:
+                    if len(f.data) >= 2:
+                        arr = f.parts[f.data[1]]
+                        try:
+                            value = arr.tolist()
+                        except:
+                            value = list(arr)
+            else:
+                type_id = int(f.types[0])
+                if f.data and len(f.data) > 0:
+                    part = f.parts[f.data[0]]
+                    if type_id == 8:
+                        try:
+                            value = bytes(part).decode("utf-8", errors="replace")
+                        except:
+                            value = str(part)
+                    elif part.size == 1:
+                        value = part.item()
+                    else:
+                        try:
+                            value = part.tolist()
+                        except:
+                            value = str(part)
+                else:
+                    value = None
+            fields[fname] = value
+        except:
+            pass
+    return fields
+
+
 def main():
     p = argparse.ArgumentParser(prog="gguf-knowledge-extractor", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -765,6 +933,32 @@ def main():
     psu.add_argument("--set-meta", help="Set metadata: key:type:value (type: string|int|float|bool)")
     psu.add_argument("--remove-meta", help="Remove metadata: key")
     psu.set_defaults(func=cmd_surgery)
+
+    # v6: merge
+    pmg = sub.add_parser("merge", help="v6: Merge two GGUF models (linear, SLERP, TIES, DARE)")
+    pmg.add_argument("model_a", help="Path to model A (base)")
+    pmg.add_argument("model_b", help="Path to model B (fine-tune)")
+    pmg.add_argument("--algorithm", default="linear", choices=["linear", "slerp", "ties", "dare"])
+    pmg.add_argument("--alpha", type=float, default=0.5, help="Merge weight (0=B, 1=A, 0.5=equal)")
+    pmg.add_argument("--filter", help="Regex to filter which tensors to merge (default: all)")
+    pmg.add_argument("--out", default="./download")
+    pmg.set_defaults(func=cmd_merge)
+
+    # v6: diff
+    pdf = sub.add_parser("diff", help="v6: Diff two GGUF files")
+    pdf.add_argument("model_a", help="Path to model A")
+    pdf.add_argument("model_b", help="Path to model B")
+    pdf.add_argument("--out", default="./download")
+    pdf.set_defaults(func=cmd_diff)
+
+    # v6: mediate (causal mediation analysis)
+    pmd = sub.add_parser("mediate", help="v6: Causal mediation analysis (activation patching)")
+    pmd.add_argument("--gguf", required=True)
+    pmd.add_argument("--prompt", required=True, help="Fact prompt to analyze")
+    pmd.add_argument("--expected", help="Expected answer (for computing causal effect)")
+    pmd.add_argument("--noise", type=float, default=1.0, help="Corruption noise std (default: 1.0)")
+    pmd.add_argument("--out", default="./download")
+    pmd.set_defaults(func=cmd_mediate)
 
     args = p.parse_args()
     args.func(args)
