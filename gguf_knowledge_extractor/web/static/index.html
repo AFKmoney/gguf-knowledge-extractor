@@ -4,348 +4,598 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GGUF Knowledge Extractor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <header>
-    <div class="brand">
-      <div class="logo">⬢</div>
-      <div>
-        <h1>GGUF Knowledge Extractor</h1>
-        <p class="tagline">Stop treating the model as a black box. Crack it open.</p>
-      </div>
+
+<!-- ====== Sidebar ====== -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <div class="sidebar-logo">⬢</div>
+    <div class="sidebar-brand">
+      <h1>GGUF Extractor</h1>
+      <div class="tagline">Mechanistic Interpretability</div>
     </div>
-    <nav>
-      <a href="#" id="nav-extract" class="active">Extract</a>
-      <a href="#" id="nav-trace">v3: Trace</a>
-      <a href="#" id="nav-edit">v3: Edit</a>
-      <a href="#" id="nav-compare">v3: Compare</a>
-      <a href="#" id="nav-models">Models</a>
-      <a href="#" id="nav-surgery">Surgery</a>
-      <a href="#" id="nav-jobs">Jobs</a>
-      <a href="#" id="nav-packs">Probe Packs</a>
-      <a href="#" id="nav-backends">Backends</a>
-    </nav>
+  </div>
+
+  <nav class="sidebar-nav">
+    <div class="nav-section">
+      <div class="nav-section-label">Overview</div>
+      <a href="#" class="nav-item active" data-view="dashboard">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        Dashboard
+      </a>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-section-label">Analysis</div>
+      <a href="#" class="nav-item" data-view="extract">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 2v6m6-6v6M5 8h14l-1 12H6L5 8z"/></svg>
+        Extract
+      </a>
+      <a href="#" class="nav-item" data-view="trace">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 12h4l3-9 4 18 3-9h4"/></svg>
+        Causal Trace
+      </a>
+      <a href="#" class="nav-item" data-view="mediate">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 010 20M12 2a15 15 0 000 20"/></svg>
+        Mediation
+      </a>
+      <a href="#" class="nav-item" data-view="compare">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M16 3h5v5M4 20l16-16M21 16v5h-5M4 4l5 5M15 15l6 6"/></svg>
+        Compare
+        <span class="nav-badge" id="badge-compare">v3</span>
+      </a>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-section-label">Modification</div>
+      <a href="#" class="nav-item" data-view="edit">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        ROME Edit
+      </a>
+      <a href="#" class="nav-item" data-view="surgery">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+        Surgery
+        <span class="nav-badge">v5</span>
+      </a>
+      <a href="#" class="nav-item" data-view="merge">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 3v12M18 9a3 3 0 100-6 3 3 0 000 6zM6 21a3 3 0 100-6 3 3 0 000 6zM6 9a3 3 0 100-6 3 3 0 000 6zm12 12v-6a6 6 0 00-6-6H6"/></svg>
+        Merge
+        <span class="nav-badge">v6</span>
+      </a>
+      <a href="#" class="nav-item" data-view="diff">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3v6m0 6v6M3 12h6m6 0h6"/><circle cx="12" cy="12" r="3"/></svg>
+        Diff
+      </a>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-section-label">Models</div>
+      <a href="#" class="nav-item" data-view="models">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12"/></svg>
+        Hub Browser
+      </a>
+      <a href="#" class="nav-item" data-view="jobs">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 8v4l3 3M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        Jobs
+        <span class="nav-badge" id="badge-jobs">0</span>
+      </a>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-section-label">Reference</div>
+      <a href="#" class="nav-item" data-view="packs">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2zM22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
+        Probe Packs
+      </a>
+      <a href="#" class="nav-item" data-view="backends">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        Backends
+      </a>
+    </div>
+  </nav>
+
+  <div class="sidebar-footer">
+    <div class="sidebar-footer-item">
+      <div class="dot"></div>
+      <span id="footer-status">Server running</span>
+    </div>
+  </div>
+</aside>
+
+<!-- ====== Main Content ====== -->
+<div class="main">
+  <header class="topbar">
+    <div>
+      <div class="topbar-title" id="topbar-title">Dashboard</div>
+      <div class="topbar-subtitle" id="topbar-subtitle">Overview of your GGUF analysis platform</div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-secondary btn-sm" onclick="location.reload()">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="14" height="14"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+        Refresh
+      </button>
+    </div>
   </header>
 
-  <main id="main">
-    <!-- Extract view -->
-    <section id="view-extract" class="view active">
+  <main class="content" id="content">
+
+    <!-- ====== Dashboard View ====== -->
+    <section id="view-dashboard" class="view active">
+      <div class="stats-grid" id="dashboard-stats">
+        <div class="stat">
+          <div class="stat-value" id="stat-models">0</div>
+          <div class="stat-label">Local Models</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value" id="stat-jobs">0</div>
+          <div class="stat-label">Total Jobs</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value accent" id="stat-packs">8</div>
+          <div class="stat-label">Probe Packs</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value teal" id="stat-features">24</div>
+          <div class="stat-label">Features</div>
+        </div>
+      </div>
+
       <div class="card">
-        <h2>1. Upload a GGUF file</h2>
+        <div class="card-header">
+          <div>
+            <div class="card-title">
+              <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="16" height="16"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              Quick Actions
+            </div>
+            <div class="card-subtitle">Jump straight into a workflow</div>
+          </div>
+        </div>
+        <div class="download-grid" style="margin-top:0;">
+          <a class="download-btn" href="#" onclick="navigateTo('extract');return false;">
+            <div class="icon">🧪</div>
+            <div class="label">Extract Knowledge</div>
+            <div class="ext">Full pipeline</div>
+          </a>
+          <a class="download-btn" href="#" onclick="navigateTo('models');return false;">
+            <div class="icon">🌐</div>
+            <div class="label">Browse HF Hub</div>
+            <div class="ext">Download models</div>
+          </a>
+          <a class="download-btn" href="#" onclick="navigateTo('surgery');return false;">
+            <div class="icon">🔬</div>
+            <div class="label">Surgery</div>
+            <div class="ext">Modify without retraining</div>
+          </a>
+          <a class="download-btn" href="#" onclick="navigateTo('merge');return false;">
+            <div class="icon">🔗</div>
+            <div class="label">Merge Models</div>
+            <div class="ext">SLERP, TIES, DARE</div>
+          </a>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">
+              <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="16" height="16"><path d="M12 8v4l3 3M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              Recent Jobs
+            </div>
+            <div class="card-subtitle">Latest extraction, trace, and surgery operations</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="navigateTo('jobs')">View all</button>
+        </div>
+        <div id="dashboard-recent-jobs"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">
+              <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="16" height="16"><path d="M9 12l2 2 4-4M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              Capabilities
+            </div>
+            <div class="card-subtitle">What this platform can do</div>
+          </div>
+        </div>
+        <div class="pack-grid">
+          <div class="pack-card"><div class="pack-name">v1 — Extract</div><div class="pack-desc">Metadata, weight inspection, inference probes, 5 export formats</div></div>
+          <div class="pack-card"><div class="pack-name">v2 — Attribution</div><div class="pack-desc">ROME/MEMIT MLP decomposition, attention head analysis, knowledge fingerprint</div></div>
+          <div class="pack-card"><div class="pack-name">v3 — Causal</div><div class="pack-desc">Logit-lens tracing, ROME rank-1 editing, cross-model lineage comparison</div></div>
+          <div class="pack-card"><div class="pack-name">v4 — Hub</div><div class="pack-desc">Browse & download GGUF models from Hugging Face Hub</div></div>
+          <div class="pack-card"><div class="pack-name">v5 — Surgery</div><div class="pack-desc">Direct GGUF modification: prompts, datasets, tokens, steering vectors</div></div>
+          <div class="pack-card"><div class="pack-name">v6 — Merge</div><div class="pack-desc">Model merging (SLERP, TIES, DARE), quantized surgery, GGUF diff, causal mediation</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====== Extract View ====== -->
+    <section id="view-extract" class="view">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="16" height="16"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Upload GGUF</div>
+            <div class="card-subtitle">Drop a file or pick from your local model library</div>
+          </div>
+        </div>
         <div class="dropzone" id="dropzone">
           <input type="file" id="file-input" accept=".gguf" hidden />
-          <div class="dz-content">
-            <div class="dz-icon">📁</div>
-            <p><strong>Drop a .gguf file here</strong> or click to browse</p>
-            <p class="hint">The file is processed locally and never leaves this machine.</p>
-          </div>
+          <div class="dropzone-icon"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="24" height="24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></div>
+          <div class="dropzone-text">Drop a .gguf file here</div>
+          <div class="dropzone-hint">or click to browse — processed locally, never uploaded</div>
         </div>
-        <p class="selected-file" id="selected-file"></p>
-        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
-          <p style="font-size:13px;margin-bottom:8px;"><strong>Or pick a downloaded model:</strong></p>
+        <p class="form-hint" id="selected-file" style="margin-top:12px;"></p>
+        <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-subtle);">
+          <div class="form-label" style="margin-bottom:8px;">Or select a downloaded model</div>
           <div style="display:flex;gap:8px;align-items:center;">
-            <select id="local-model-select" style="flex:1;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-family:var(--mono);font-size:13px;">
-              <option value="">— Select a downloaded model —</option>
+            <select id="local-model-select" class="form-select" style="flex:1;">
+              <option value="">— Select a local model —</option>
             </select>
-            <button id="btn-refresh-local-models" class="btn-secondary" style="padding:8px 12px;">Refresh</button>
+            <button id="btn-refresh-local-models" class="btn btn-secondary btn-sm">Refresh</button>
           </div>
-          <p class="hint" style="margin-top:6px;">Download models from the <a href="#" id="link-to-models" style="color:var(--accent-2);">Models tab</a>.</p>
+          <p class="form-hint" style="margin-top:6px;">Download models from the <a href="#" id="link-to-models" style="color:var(--accent);">Hub Browser</a></p>
         </div>
       </div>
 
       <div class="card">
-        <h2>2. Choose what to extract</h2>
+        <div class="card-header">
+          <div>
+            <div class="card-title">Extraction Options</div>
+            <div class="card-subtitle">Choose what to extract from the model</div>
+          </div>
+        </div>
         <div class="checkbox-grid">
-          <label><input type="checkbox" id="opt-metadata" checked /> Model metadata</label>
-          <label><input type="checkbox" id="opt-weights" checked /> Weight inspection (mechanistic)</label>
-          <label><input type="checkbox" id="opt-probes" checked /> Inference probes (facts/concepts/behavioral)</label>
-          <label><input type="checkbox" id="opt-attribution" checked /> <strong>v2: Knowledge attribution</strong> <span class="hint">(ROME/MEMIT MLP decomposition)</span></label>
+          <label class="checkbox"><input type="checkbox" id="opt-metadata" checked /> Model metadata</label>
+          <label class="checkbox"><input type="checkbox" id="opt-weights" checked /> Weight inspection</label>
+          <label class="checkbox"><input type="checkbox" id="opt-probes" checked /> Inference probes</label>
+          <label class="checkbox" id="cb-attribution"><input type="checkbox" id="opt-attribution" checked /> v2 Attribution</label>
         </div>
-        <div class="form-row" style="margin-top:10px;">
-          <label>
-            Attribution top-K per layer
-            <input type="number" id="opt-attribution-top-k" value="20" min="5" max="100" />
-          </label>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>3. Select probe packs</h2>
-        <div id="packs-list" class="packs-grid">
-          <p class="hint">Loading probe packs...</p>
+        <div class="form-row" style="margin-top:12px;">
+          <div class="form-group">
+            <div class="form-label">Attribution top-K per layer</div>
+            <input type="number" class="form-input" id="opt-attribution-top-k" value="20" min="5" max="100" />
+          </div>
         </div>
       </div>
 
       <div class="card">
-        <h2>4. Inference backend</h2>
+        <div class="card-header">
+          <div>
+            <div class="card-title">Probe Packs</div>
+            <div class="card-subtitle">Select which knowledge domains to test</div>
+          </div>
+        </div>
+        <div id="packs-list" class="pack-grid"><p class="form-hint">Loading...</p></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Inference Backend</div>
+            <div class="card-subtitle">Required for inference probes — optional for weight-only analysis</div>
+          </div>
+          <button id="btn-check-backends" class="btn btn-secondary btn-sm">Check availability</button>
+        </div>
         <div class="form-row">
-          <label>
-            Prefer
-            <select id="opt-prefer">
-              <option value="auto">Auto (try server, fall back to python)</option>
-              <option value="server">llama.cpp server (HTTP)</option>
-              <option value="python">llama-cpp-python (in-process)</option>
-            </select>
-          </label>
-          <label>
-            Server URL
-            <input type="text" id="opt-server-url" value="http://127.0.0.1:8080" />
-          </label>
-          <label>
-            n_ctx
-            <input type="number" id="opt-nctx" value="4096" min="512" max="32768" />
-          </label>
-          <label>
-            n_gpu_layers
-            <input type="number" id="opt-ngpu" value="0" min="0" max="200" />
-          </label>
+          <div class="form-group"><div class="form-label">Prefer</div>
+            <select class="form-select" id="opt-prefer"><option value="auto">Auto</option><option value="server">llama.cpp server</option><option value="python">llama-cpp-python</option></select>
+          </div>
+          <div class="form-group"><div class="form-label">Server URL</div><input type="text" class="form-input" id="opt-server-url" value="http://127.0.0.1:8080" /></div>
+          <div class="form-group"><div class="form-label">n_ctx</div><input type="number" class="form-input" id="opt-nctx" value="4096" min="512" max="32768" /></div>
+          <div class="form-group"><div class="form-label">n_gpu_layers</div><input type="number" class="form-input" id="opt-ngpu" value="0" min="0" max="200" /></div>
         </div>
-        <button id="btn-check-backends" class="btn-secondary">Check backend availability</button>
-        <div id="backends-status" class="backends-status"></div>
+        <div id="backends-status"></div>
       </div>
 
-      <div class="card actions">
-        <button id="btn-extract" class="btn-primary" disabled>Extract knowledge →</button>
+      <div style="display:flex;justify-content:flex-end;">
+        <button id="btn-extract" class="btn btn-primary btn-lg" disabled>Extract Knowledge →</button>
       </div>
     </section>
 
-    <!-- v3: Trace view -->
+    <!-- ====== Trace View ====== -->
     <section id="view-trace" class="view">
       <div class="card">
-        <h2>v3: Logit-Lens Causal Tracing</h2>
-        <p class="hint">Runs a pure-numpy forward pass on the GGUF and projects hidden states through the lm_head at each layer. Finds the earliest layer where each fact's answer appears in top-K predictions. <strong>No inference backend required</strong> — works directly on weights.</p>
-        <p class="hint">Requires Llama-architecture with full attn + MLP tensors (attn_q/k/v/output, ffn_gate/up/down, attn_norm, ffn_norm, output_norm, output).</p>
-      </div>
-      <div class="card">
-        <h2>Upload GGUF</h2>
+        <div class="card-header">
+          <div>
+            <div class="card-title"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="16" height="16"><path d="M3 12h4l3-9 4 18 3-9h4"/></svg>Logit-Lens Causal Tracing</div>
+            <div class="card-subtitle">Pure-numpy forward pass — finds which layer knows each fact. No inference backend needed.</div>
+          </div>
+        </div>
         <div class="dropzone" id="trace-dropzone">
           <input type="file" id="trace-file-input" accept=".gguf" hidden />
-          <div class="dz-content">
-            <div class="dz-icon">🧠</div>
-            <p><strong>Drop a .gguf file</strong> or click to browse</p>
-          </div>
+          <div class="dropzone-icon"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="24" height="24"><path d="M9 2v6m6-6v6M5 8h14l-1 12H6L5 8z"/></svg></div>
+          <div class="dropzone-text">Drop a .gguf file</div>
+          <div class="dropzone-hint">Requires Llama-arch with full attn + MLP tensors</div>
         </div>
-        <p class="selected-file" id="trace-selected-file"></p>
-        <div class="form-row" style="margin-top:14px;">
-          <label>Top-K per layer<input type="number" id="trace-top-k" value="10" min="1" max="50" /></label>
+        <p class="form-hint" id="trace-selected-file" style="margin-top:12px;"></p>
+        <div class="form-row" style="margin-top:16px;">
+          <div class="form-group"><div class="form-label">Top-K per layer</div><input type="number" class="form-input" id="trace-top-k" value="10" min="1" max="50" /></div>
         </div>
-        <button id="btn-trace" class="btn-primary" disabled style="margin-top:14px;">Run causal trace →</button>
+        <button id="btn-trace" class="btn btn-primary btn-lg" disabled style="margin-top:16px;">Run Causal Trace →</button>
       </div>
     </section>
 
-    <!-- v3: Edit view -->
+    <!-- ====== Mediation View ====== -->
+    <section id="view-mediate" class="view">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 010 20M12 2a15 15 0 000 20"/></svg>Causal Mediation Analysis</div>
+            <div class="card-subtitle">True activation patching — corrupt subject embeddings, restore clean hidden states per layer to find where knowledge is causally stored</div>
+          </div>
+        </div>
+        <div class="dropzone" id="mediate-dropzone">
+          <input type="file" id="mediate-file-input" accept=".gguf" hidden />
+          <div class="dropzone-icon"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="24" height="24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20z"/></svg></div>
+          <div class="dropzone-text">Drop a .gguf file</div>
+          <div class="dropzone-hint">Llama-arch required</div>
+        </div>
+        <p class="form-hint" id="mediate-selected-file" style="margin-top:12px;"></p>
+        <div class="form-row" style="margin-top:16px;">
+          <div class="form-group" style="grid-column:1/-1;"><div class="form-label">Prompt</div><input type="text" class="form-input" id="mediate-prompt" placeholder="The Eiffel Tower is located in" /></div>
+          <div class="form-group"><div class="form-label">Expected answer</div><input type="text" class="form-input" id="mediate-expected" placeholder=" Paris" /></div>
+          <div class="form-group"><div class="form-label">Corruption noise</div><input type="number" class="form-input" id="mediate-noise" value="1.0" step="0.5" min="0.1" /></div>
+        </div>
+        <button id="btn-mediate" class="btn btn-primary btn-lg" disabled style="margin-top:16px;">Run Mediation Analysis →</button>
+      </div>
+    </section>
+
+    <!-- ====== Edit View (ROME) ====== -->
     <section id="view-edit" class="view">
       <div class="card">
-        <h2>v3: ROME Rank-1 Fact Editing</h2>
-        <p class="hint">Overwrites specific factual associations in the model's MLP weights — <strong>without retraining</strong>. Uses the ROME algorithm: finds the layer+neuron storing a fact, then applies a rank-1 update to W_down that replaces the stored value with a new target.</p>
-        <p class="hint">The modified GGUF is saved as a new file. The original is never modified.</p>
-      </div>
-      <div class="card">
-        <h2>Upload GGUF</h2>
+        <div class="card-header">
+          <div>
+            <div class="card-title"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="16" height="16"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>ROME Rank-1 Fact Editing</div>
+            <div class="card-subtitle">Overwrites specific factual associations in MLP weights — without retraining</div>
+          </div>
+        </div>
         <div class="dropzone" id="edit-dropzone">
           <input type="file" id="edit-file-input" accept=".gguf" hidden />
-          <div class="dz-content">
-            <div class="dz-icon">✏️</div>
-            <p><strong>Drop a .gguf file</strong> or click to browse</p>
-          </div>
+          <div class="dropzone-icon"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="24" height="24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div>
+          <div class="dropzone-text">Drop a .gguf file</div>
+          <div class="dropzone-hint">The original file is never modified</div>
         </div>
-        <p class="selected-file" id="edit-selected-file"></p>
+        <p class="form-hint" id="edit-selected-file" style="margin-top:12px;"></p>
       </div>
+
       <div class="card">
-        <h2>Edit requests</h2>
-        <p class="hint">Each edit specifies: subject (e.g. "The Eiffel Tower"), prompt (full question), and target_object (new answer).</p>
+        <div class="card-header">
+          <div>
+            <div class="card-title">Edit Requests</div>
+            <div class="card-subtitle">Each edit specifies: subject, full prompt, and target answer</div>
+          </div>
+          <button id="btn-add-edit" class="btn btn-secondary btn-sm">+ Add edit</button>
+        </div>
         <div id="edits-list"></div>
-        <button id="btn-add-edit" class="btn-secondary" style="margin-top:10px;">+ Add edit</button>
       </div>
-      <div class="card actions">
-        <button id="btn-edit" class="btn-primary" disabled>Apply ROME edits →</button>
+
+      <div style="display:flex;justify-content:flex-end;">
+        <button id="btn-edit" class="btn btn-primary btn-lg" disabled>Apply ROME Edits →</button>
       </div>
     </section>
 
-    <!-- v3: Compare view -->
+    <!-- ====== Compare View ====== -->
     <section id="view-compare" class="view">
       <div class="card">
-        <h2>v3: Cross-Model Fingerprint Comparison</h2>
-        <p class="hint">Upload 2 or more attribution JSON reports (from previous extract runs). Compares fingerprints, top neurons, top tokens, concept mastery, and behavioral profile to detect shared training data lineage.</p>
-      </div>
-      <div class="card">
-        <h2>Upload attribution reports</h2>
-        <div class="dropzone" id="compare-dropzone">
-          <input type="file" id="compare-file-input" accept=".json" multiple hidden />
-          <div class="dz-content">
-            <div class="dz-icon">🔍</div>
-            <p><strong>Drop 2+ *_report.json files</strong> or click to browse</p>
-            <p class="hint">Use the file inputs from previous extraction jobs.</p>
+        <div class="card-header">
+          <div>
+            <div class="card-title"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="16" height="16"><path d="M16 3h5v5M4 20l16-16M21 16v5h-5M4 4l5 5M15 15l6 6"/></svg>Cross-Model Fingerprint Comparison</div>
+            <div class="card-subtitle">Upload 2+ attribution reports to detect shared training data lineage</div>
           </div>
         </div>
-        <div id="compare-files-list" style="margin-top:10px;"></div>
-        <button id="btn-compare" class="btn-primary" disabled style="margin-top:14px;">Compare models →</button>
+        <div class="dropzone" id="compare-dropzone">
+          <input type="file" id="compare-file-input" accept=".json" multiple hidden />
+          <div class="dropzone-icon"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="24" height="24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg></div>
+          <div class="dropzone-text">Drop 2+ JSON reports</div>
+          <div class="dropzone-hint">Use files from previous extraction jobs</div>
+        </div>
+        <div id="compare-files-list" style="margin-top:12px;"></div>
+        <button id="btn-compare" class="btn btn-primary btn-lg" disabled style="margin-top:16px;">Compare Models →</button>
       </div>
     </section>
 
-    <!-- v4: Models view (Hugging Face Hub browser) -->
+    <!-- ====== Surgery View ====== -->
+    <section id="view-surgery" class="view">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="16" height="16"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>GGUF Surgery — Direct Modification</div>
+            <div class="card-subtitle">Bake prompts, inject datasets, extend vocab, add steering vectors, patch tensors — without retraining</div>
+          </div>
+        </div>
+        <div class="dropzone" id="surgery-dropzone">
+          <input type="file" id="surgery-file-input" accept=".gguf" hidden />
+          <div class="dropzone-icon"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="24" height="24"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg></div>
+          <div class="dropzone-text">Drop a .gguf file</div>
+          <div class="dropzone-hint">A new modified GGUF will be written — source is never changed</div>
+        </div>
+        <p class="form-hint" id="surgery-selected-file" style="margin-top:12px;"></p>
+        <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-subtle);">
+          <div class="form-label" style="margin-bottom:8px;">Or use a downloaded model</div>
+          <select id="surgery-local-select" class="form-select"><option value="">— Select a local model —</option></select>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Operations</div>
+            <div class="card-subtitle">Add operations to perform on the model</div>
+          </div>
+          <button id="btn-surgery-add-op" class="btn btn-secondary btn-sm">+ Add operation</button>
+        </div>
+        <div id="surgery-ops-list"></div>
+        <div id="surgery-op-templates" style="display:none;">
+          <div data-template="bake_system_prompt"><div class="form-group"><div class="form-label">System Prompt</div><textarea class="form-textarea" data-field="prompt" placeholder="You are a helpful assistant."></textarea></div></div>
+          <div data-template="set_chat_template"><div class="form-group"><div class="form-label">Chat Template (Jinja)</div><textarea class="form-textarea" data-field="template" placeholder="{%- for m in messages %}{{ m.role }}: {{ m.content }}&#10;{%- endfor %}"></textarea></div></div>
+          <div data-template="inject_dataset"><div class="form-row"><div class="form-group"><div class="form-label">Dataset Name</div><input type="text" class="form-input" data-field="name" placeholder="my_dataset" /></div><div class="form-group"><div class="form-label">Description</div><input type="text" class="form-input" data-field="description" placeholder="Optional" /></div></div><div class="form-group"><div class="form-label">JSON Data</div><textarea class="form-textarea" data-field="data" placeholder='[{"q": "Question", "a": "Answer"}]'></textarea></div></div>
+          <div data-template="add_token"><div class="form-row"><div class="form-group"><div class="form-label">Token</div><input type="text" class="form-input" data-field="token" placeholder="[CUSTOM]" /></div><div class="form-group"><div class="form-label">Embedding (comma-separated, optional)</div><input type="text" class="form-input" data-field="embedding" placeholder="0.1,0.2,..." /></div></div></div>
+          <div data-template="add_steering_vector"><div class="form-row"><div class="form-group"><div class="form-label">Layer</div><input type="number" class="form-input" data-field="layer" value="0" min="0" /></div><div class="form-group"><div class="form-label">Name</div><input type="text" class="form-input" data-field="name" value="default" /></div><div class="form-group"><div class="form-label">Strength</div><input type="number" class="form-input" data-field="strength" value="1.0" step="0.1" /></div></div><div class="form-group"><div class="form-label">Vector (comma-separated floats)</div><input type="text" class="form-input" data-field="vector" style="font-family:var(--font-mono);" placeholder="0.1,0.2,0.3,..." /></div></div>
+          <div data-template="set_metadata"><div class="form-row"><div class="form-group"><div class="form-label">Key</div><input type="text" class="form-input" data-field="key" placeholder="general.custom_field" /></div><div class="form-group"><div class="form-label">Type</div><select class="form-select" data-field="value_type"><option value="string">string</option><option value="int">int</option><option value="float">float</option><option value="bool">bool</option></select></div><div class="form-group"><div class="form-label">Value</div><input type="text" class="form-input" data-field="value" placeholder="value" /></div></div></div>
+          <div data-template="remove_metadata"><div class="form-group"><div class="form-label">Key to remove</div><input type="text" class="form-input" data-field="key" placeholder="general.field_to_remove" /></div></div>
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;">
+        <button id="btn-surgery-run" class="btn btn-primary btn-lg" disabled>Run Surgery →</button>
+      </div>
+    </section>
+
+    <!-- ====== Merge View ====== -->
+    <section id="view-merge" class="view">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="16" height="16"><path d="M6 3v12M18 9a3 3 0 100-6 3 3 0 000 6zM6 21a3 3 0 100-6 3 3 0 000 6zM6 9a3 3 0 100-6 3 3 0 000 6zm12 12v-6a6 6 0 00-6-6H6"/></svg>Model Merging</div>
+            <div class="card-subtitle">Merge two GGUF models using 4 algorithms — no retraining</div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><div class="form-label">Model A (base)</div><input type="text" class="form-input" id="merge-model-a" placeholder="/path/to/model_a.gguf" /></div>
+          <div class="form-group"><div class="form-label">Model B (fine-tune)</div><input type="text" class="form-input" id="merge-model-b" placeholder="/path/to/model_b.gguf" /></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><div class="form-label">Algorithm</div><select class="form-select" id="merge-algorithm"><option value="linear">Linear (weighted average)</option><option value="slerp">SLERP (spherical interpolation)</option><option value="ties">TIES (Trim, Elect, Sign)</option><option value="dare">DARE (Drop And Rescale)</option></select></div>
+          <div class="form-group"><div class="form-label">Alpha (0=B, 1=A, 0.5=equal)</div><input type="number" class="form-input" id="merge-alpha" value="0.5" step="0.1" min="0" max="1" /></div>
+          <div class="form-group"><div class="form-label">Tensor filter (regex, optional)</div><input type="text" class="form-input" id="merge-filter" placeholder=".*attn.*" /></div>
+        </div>
+        <button id="btn-merge" class="btn btn-primary btn-lg" style="margin-top:16px;">Merge Models →</button>
+      </div>
+    </section>
+
+    <!-- ====== Diff View ====== -->
+    <section id="view-diff" class="view">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="16" height="16"><path d="M12 3v6m0 6v6M3 12h6m6 0h6"/><circle cx="12" cy="12" r="3"/></svg>GGUF Diff</div>
+            <div class="card-subtitle">Compare two GGUF files at byte, metadata, and tensor level</div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><div class="form-label">Model A</div><input type="text" class="form-input" id="diff-model-a" placeholder="/path/to/model_a.gguf" /></div>
+          <div class="form-group"><div class="form-label">Model B</div><input type="text" class="form-input" id="diff-model-b" placeholder="/path/to/model_b.gguf" /></div>
+        </div>
+        <button id="btn-diff" class="btn btn-primary btn-lg" style="margin-top:16px;">Compute Diff →</button>
+      </div>
+    </section>
+
+    <!-- ====== Models View ====== -->
     <section id="view-models" class="view">
       <div class="card">
-        <h2>Hugging Face Hub — Browse & Download GGUF Models</h2>
-        <p class="hint">Search the HF Hub for GGUF models, download them directly to your local models directory, then use them in Extract / Trace / Edit. Just like LM Studio.</p>
-      </div>
-
-      <div class="card">
-        <h2>Search</h2>
-        <div class="form-row">
-          <label style="grid-column: 1 / -1;">
-            Query
-            <div style="display:flex;gap:8px;">
-              <input type="text" id="models-search-query" placeholder="e.g. llama 3 8b instruct" style="flex:1;" />
-              <button id="btn-models-search" class="btn-primary">Search</button>
-            </div>
-          </label>
+        <div class="card-header">
+          <div>
+            <div class="card-title"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="16" height="16"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>Hugging Face Hub</div>
+            <div class="card-subtitle">Browse and download GGUF models directly — LM Studio style</div>
+          </div>
         </div>
-        <div id="models-search-results" style="margin-top:14px;"></div>
+        <div class="form-row">
+          <div class="form-group" style="grid-column:1/-1;">
+            <div class="form-label">Search</div>
+            <div style="display:flex;gap:8px;">
+              <input type="text" class="form-input" id="models-search-query" placeholder="e.g. llama 3 8b instruct" style="flex:1;" />
+              <button id="btn-models-search" class="btn btn-primary">Search</button>
+            </div>
+          </div>
+        </div>
+        <div id="models-search-results" style="margin-top:16px;"></div>
       </div>
 
       <div class="card">
-        <h2>Active &amp; Recent Downloads</h2>
+        <div class="card-header">
+          <div>
+            <div class="card-title">Active Downloads</div>
+          </div>
+        </div>
         <div id="models-downloads-list"></div>
       </div>
 
       <div class="card">
-        <h2>Local Models</h2>
-        <p class="hint" id="models-local-dir"></p>
-        <div id="models-local-list" style="margin-top:14px;"></div>
+        <div class="card-header">
+          <div>
+            <div class="card-title">Local Models</div>
+            <div class="card-subtitle" id="models-local-dir"></div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="loadLocalModels()">Refresh</button>
+        </div>
+        <div id="models-local-list"></div>
       </div>
 
       <div class="card">
-        <h2>Model Details</h2>
-        <p class="hint">Enter a repo ID to see its files and download a specific GGUF.</p>
+        <div class="card-header">
+          <div>
+            <div class="card-title">Model Details</div>
+            <div class="card-subtitle">Enter a repo ID to see files and download</div>
+          </div>
+        </div>
         <div class="form-row">
-          <label style="grid-column: 1 / -1;">
-            Repo ID
+          <div class="form-group" style="grid-column:1/-1;">
+            <div class="form-label">Repo ID</div>
             <div style="display:flex;gap:8px;">
-              <input type="text" id="models-info-repo" placeholder="e.g. hugging-quants/Llama-3.2-1B-Instruct-Q8_0-GGUF" style="flex:1;" />
-              <button id="btn-models-info" class="btn-secondary">Get info</button>
+              <input type="text" class="form-input" id="models-info-repo" placeholder="hugging-quants/Llama-3.2-1B-Instruct-Q8_0-GGUF" style="flex:1;" />
+              <button id="btn-models-info" class="btn btn-secondary">Get info</button>
             </div>
-          </label>
+          </div>
         </div>
-        <div id="models-info-result" style="margin-top:14px;"></div>
+        <div id="models-info-result" style="margin-top:16px;"></div>
       </div>
     </section>
 
-    <!-- v5: Surgery view (direct GGUF modification) -->
-    <section id="view-surgery" class="view">
-      <div class="card">
-        <h2>v5: GGUF Surgery — Direct Modification Without Retraining</h2>
-        <p class="hint">Surgically modify any GGUF model: bake system prompts, inject datasets, extend vocabulary, add steering vectors, rewrite chat templates, patch tensors. The source file is never modified — a new GGUF is written.</p>
-      </div>
-
-      <div class="card">
-        <h2>1. Select a model</h2>
-        <div class="dropzone" id="surgery-dropzone">
-          <input type="file" id="surgery-file-input" accept=".gguf" hidden />
-          <div class="dz-content">
-            <div class="dz-icon">🔬</div>
-            <p><strong>Drop a .gguf file</strong> or click to browse</p>
-          </div>
-        </div>
-        <p class="selected-file" id="surgery-selected-file"></p>
-        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
-          <p style="font-size:13px;margin-bottom:8px;"><strong>Or use a downloaded model:</strong></p>
-          <select id="surgery-local-select" style="width:100%;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-family:var(--mono);font-size:13px;">
-            <option value="">— Select a local model —</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>2. Operations</h2>
-        <p class="hint">Add operations to perform on the model. Each operation modifies the model in-memory before writing the output file.</p>
-
-        <div id="surgery-ops-list"></div>
-        <button id="btn-surgery-add-op" class="btn-secondary" style="margin-top:10px;">+ Add operation</button>
-
-        <div id="surgery-op-templates" style="display:none;">
-          <!-- Templates for each operation type, cloned by JS -->
-          <div data-template="bake_system_prompt">
-            <label>System Prompt<textarea data-field="prompt" rows="3" style="width:100%;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-family:var(--mono);font-size:12px;" placeholder="You are a helpful assistant."></textarea></label>
-          </div>
-          <div data-template="set_chat_template">
-            <label>Chat Template (Jinja)<textarea data-field="template" rows="3" style="width:100%;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-family:var(--mono);font-size:12px;" placeholder="{%- for message in messages %}{{ message.role }}: {{ message.content }}\n{%- endfor %}"></textarea></label>
-          </div>
-          <div data-template="inject_dataset">
-            <div class="form-row">
-              <label>Dataset Name<input type="text" data-field="name" placeholder="my_dataset" /></label>
-              <label>Description<input type="text" data-field="description" placeholder="Optional description" /></label>
-            </div>
-            <label>JSON Data<textarea data-field="data" rows="4" style="width:100%;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-family:var(--mono);font-size:12px;" placeholder='[{"q": "Question", "a": "Answer"}]'></textarea></label>
-          </div>
-          <div data-template="add_token">
-            <div class="form-row">
-              <label>Token Text<input type="text" data-field="token" placeholder="[CUSTOM]" /></label>
-              <label>Embedding (comma-separated floats, optional)<input type="text" data-field="embedding" placeholder="0.1,0.2,0.3,..." /></label>
-            </div>
-          </div>
-          <div data-template="add_steering_vector">
-            <div class="form-row">
-              <label>Layer<input type="number" data-field="layer" value="0" min="0" /></label>
-              <label>Name<input type="text" data-field="name" value="default" /></label>
-              <label>Strength<input type="number" data-field="strength" value="1.0" step="0.1" /></label>
-            </div>
-            <label>Vector (comma-separated floats)<input type="text" data-field="vector" style="width:100%;font-family:var(--mono);" placeholder="0.1,0.2,0.3,..." /></label>
-          </div>
-          <div data-template="set_metadata">
-            <div class="form-row">
-              <label>Key<input type="text" data-field="key" placeholder="general.custom_field" /></label>
-              <label>Type<select data-field="value_type"><option value="string">string</option><option value="int">int</option><option value="float">float</option><option value="bool">bool</option></select></label>
-              <label>Value<input type="text" data-field="value" placeholder="value" /></label>
-            </div>
-          </div>
-          <div data-template="remove_metadata">
-            <label>Key to remove<input type="text" data-field="key" placeholder="general.field_to_remove" /></label>
-          </div>
-        </div>
-      </div>
-
-      <div class="card actions">
-        <button id="btn-surgery-run" class="btn-primary" disabled>Run surgery →</button>
-      </div>
-    </section>
-
-    <!-- Job progress / results -->
+    <!-- ====== Job View ====== -->
     <section id="view-job" class="view">
       <div id="job-content"></div>
     </section>
 
-    <!-- Jobs list -->
+    <!-- ====== Jobs List View ====== -->
     <section id="view-jobs" class="view">
       <div class="card">
-        <h2>Past extraction jobs</h2>
+        <div class="card-header">
+          <div>
+            <div class="card-title">All Jobs</div>
+            <div class="card-subtitle">Extraction, trace, edit, surgery, and merge operations</div>
+          </div>
+        </div>
         <div id="jobs-list"></div>
       </div>
     </section>
 
-    <!-- Packs -->
+    <!-- ====== Packs View ====== -->
     <section id="view-packs" class="view">
       <div class="card">
-        <h2>Probe packs shipped with this tool</h2>
-        <div id="packs-detail"></div>
+        <div class="card-header">
+          <div>
+            <div class="card-title">Probe Packs</div>
+            <div class="card-subtitle">YAML-defined test suites shipped with the tool</div>
+          </div>
+        </div>
+        <div id="packs-detail" class="pack-grid"></div>
       </div>
     </section>
 
-    <!-- Backends -->
+    <!-- ====== Backends View ====== -->
     <section id="view-backends" class="view">
       <div class="card">
-        <h2>Inference backend availability</h2>
-        <p class="hint">Probes need an inference backend. If neither is available, probes will be skipped (metadata & weights still work).</p>
+        <div class="card-header">
+          <div>
+            <div class="card-title">Inference Backend Availability</div>
+            <div class="card-subtitle">Probes need an inference backend. Weight-only analysis works without one.</div>
+          </div>
+        </div>
         <div id="backends-detail"></div>
       </div>
     </section>
+
   </main>
+</div>
 
-  <footer>
-    <p>GGUF Knowledge Extractor v1.0.0 — hybrid weight inspection + inference probing</p>
-  </footer>
+<!-- Toast container -->
+<div class="toast-container" id="toast-container"></div>
 
-  <script src="/static/app.js"></script>
+<script src="/static/app.js"></script>
 </body>
 </html>

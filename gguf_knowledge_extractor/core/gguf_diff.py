@@ -218,7 +218,11 @@ class GGUFDiffer:
 
             tensor_diffs.append(asdict(td))
 
-        avg_cosine = total_cosine_sim / n_cosine if n_cosine > 0 else 0.0
+        avg_cosine = total_cosine_sim / n_cosine if n_cosine > 0 else 1.0
+
+        # When no tensors are modified, similarity is 100%
+        if n_modified == 0 and n_same > 0:
+            avg_cosine = 1.0
 
         return DiffReport(
             source_a=self.source_a,

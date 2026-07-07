@@ -37,6 +37,9 @@ from ..core.rome_editor import RomeEditor, EditRequest
 from ..core.fingerprint_compare import FingerprintComparator
 from ..core.model_manager import ModelManager, format_bytes
 from ..core.gguf_surgeon import GGUFSurgeon, surgery_session
+from ..core.model_merger import ModelMerger
+from ..core.gguf_diff import GGUFDiffer
+from ..core.activation_patcher import ActivationPatcher
 
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -563,7 +566,147 @@ def create_app() -> FastAPI:
         background_tasks.add_task(_run_surgery, job_id, str(gguf_path), operations)
         return {"job_id": job_id, "status": "queued"}
 
+    # ------------------------------------------------------------------ #
+    # v6 API: Merge, Diff, Mediate
+    # ------------------------------------------------------------------ #
+    @app.post("/api/merge")
+    async def api_merge(
+        background_tasks: BackgroundTasks,
+        model_a: str = Form(...),
+        model_b: str = Form(...),
+        algorithm: str = Form("linear"),
+        alpha: float = Form(0.5),
+        filter: str = Form(""),
+    ):
+        """v6: Merge two GGUF models."""
+        if not Path(model_a).exists() or not Path(model_b).exists():
+            raise HTTPException(400, "One or both model files not found")
+        job_id = str(uuid.uuid4())[:8]
+        JOBS[job_id] = {
+            "id": job_id, "status": "queued",
+            "gguf_filename": f"merge_{algorithm}",
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "progress": {"message": "queued", "current": 0, "total": 0},
+            "result_paths": {}, "error": None,
+            "options": {"model_a": model_a, "model_b": model_b, "algorithm": algorithm, "alpha": alpha},
+            "kind": "merge",
+        }
+        background_tasks.add_task(_run_merge, job_id, model_a, model_b, algorithm, alpha, filter)
+        return {"job_id": job_id, "status": "queued"}
+
+    @app.post("/api/diff")
+    async def api_diff(
+        model_a: str = Form(...),
+        model_b: str = Form(...),
+    ):
+        """v6: Diff two GGUF files (synchronous)."""
+        if not Path(model_a).exists() or not Path(model_b).exists():
+            raise HTTPException(400, "One or both model files not found")
+        try:
+            differ = GGUFDiffer(model_a, model_b)
+            report = differ.diff()
+            import dataclasses
+            return {"report": _to_jsonable(dataclasses.asdict(report))}
+        except Exception as e:
+            raise HTTPException(500, f"Diff failed: {e}")
+
+    @app.post("/api/mediate")
+    async def api_mediate(
+        background_tasks: BackgroundTasks,
+        file: UploadFile = File(...),
+        prompt: str = Form(...),
+        expected: str = Form(""),
+        noise: float = Form(1.0),
+    ):
+        """v6: Causal mediation analysis (activation patching)."""
+        if not file.filename or not file.filename.lower().endswith(".gguf"):
+            raise HTTPException(400, "File must be a .gguf file")
+        job_id = str(uuid.uuid4())[:8]
+        job_dir = JOBS_DIR / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        gguf_path = job_dir / file.filename
+        with open(gguf_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        JOBS[job_id] = {
+            "id": job_id, "status": "queued",
+            "gguf_path": str(gguf_path), "gguf_filename": file.filename,
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "progress": {"message": "queued", "current": 0, "total": 0},
+            "result_paths": {}, "error": None,
+            "options": {"prompt": prompt, "expected": expected, "noise": noise},
+            "kind": "mediate",
+        }
+        background_tasks.add_task(_run_mediate, job_id, str(gguf_path), prompt, expected, noise)
+        return {"job_id": job_id, "status": "queued"}
+
     return app
+
+
+# ---------------------------------------------------------------------- #
+# v6 background workers
+# ---------------------------------------------------------------------- #
+def _run_merge(job_id: str, model_a: str, model_b: str, algorithm: str, alpha: float, tensor_filter: str):
+    """Background worker for model merging."""
+    job = JOBS[job_id]
+    job["status"] = "running"
+    try:
+        job["progress"] = {"message": f"Merging with {algorithm}", "current": 0, "total": 1}
+        job_dir = JOBS_DIR / job_id
+        output_path = job_dir / f"merged_{algorithm}.gguf"
+        merger = ModelMerger(model_a, model_b)
+        report = merger.merge(str(output_path), algorithm=algorithm, alpha=alpha,
+                              tensor_filter=tensor_filter if tensor_filter else None)
+        import dataclasses
+        report_dict = _to_jsonable(dataclasses.asdict(report))
+        job["result_paths"] = {"merged_gguf": report.output_path, "json": str(job_dir / "merge_report.json")}
+        import json as _json
+        with open(job["result_paths"]["json"], "w") as f:
+            _json.dump(report_dict, f, indent=2, default=str)
+        job["report_preview"] = report_dict
+        job["status"] = "completed"
+        job["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception as e:
+        import traceback
+        job["status"] = "failed"
+        job["error"] = str(e)
+        job["traceback"] = traceback.format_exc()
+
+
+def _run_mediate(job_id: str, gguf_path: str, prompt: str, expected: str, noise: float):
+    """Background worker for causal mediation analysis."""
+    import gguf
+    job = JOBS[job_id]
+    job["status"] = "running"
+    try:
+        reader = gguf.GGUFReader(gguf_path)
+        fields = _load_fields(reader)
+        patcher = ActivationPatcher(reader, fields)
+        if not patcher.is_available():
+            job["status"] = "failed"
+            job["error"] = "Forward pass not available (need Llama-arch)"
+            return
+        job["progress"] = {"message": "Running causal mediation analysis", "current": 0, "total": 1}
+        report = patcher.analyze(
+            probe_id="web_mediate", prompt=prompt,
+            expected_answer=expected if expected else None,
+            corruption_noise_std=noise,
+        )
+        import dataclasses
+        report_dict = _to_jsonable(dataclasses.asdict(report))
+        job_dir = Path(gguf_path).parent
+        out_path = job_dir / "mediation_report.json"
+        import json as _json
+        with open(out_path, "w") as f:
+            _json.dump(report_dict, f, indent=2, default=str)
+        job["result_paths"] = {"json": str(out_path)}
+        job["report_preview"] = report_dict
+        job["status"] = "completed"
+        job["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception as e:
+        import traceback
+        job["status"] = "failed"
+        job["error"] = str(e)
+        job["traceback"] = traceback.format_exc()
 
 
 # ---------------------------------------------------------------------- #
