@@ -38,11 +38,12 @@ def test_memit_satisfies_regularized_normal_equation():
     C = np.eye(4, dtype=np.float32) * 0.1
     delta = memit_layer_update(W, K, V, C)
     A = C + K @ K.T
+    # Regularized MEMIT optimum: Delta @ A = (V - W@K) @ K.T
+    # with A = C + K@K.T. Residual need not be ~0 under regularization.
     residual = (V - (W + delta) @ K) @ K.T
-    # The regularized optimum obeys Delta A = (V-WK)K^T.
-    assert np.allclose(delta @ A, residual + delta @ A, atol=1e-4)
     expected = (V - W @ K) @ K.T
     assert np.allclose(delta @ A, expected, atol=1e-4)
+    assert not np.allclose(residual, 0, atol=1e-4)
 
 
 def test_task_arithmetic_is_exact_vector_addition():
