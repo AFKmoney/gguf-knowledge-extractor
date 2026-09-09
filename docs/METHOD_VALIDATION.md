@@ -9,7 +9,7 @@ model-level behavioral tests.
 
 | Method | Defining requirement | Current gate |
 |---|---|---|
-| ROME | rank-one constrained least-squares update using key second moment `C = E[kk^T]`; target value `v*` must be defined independently of a single neuron-column overwrite | equation test + model edit success/locality test |
+| ROME | rank-one constrained least-squares update using key second moment `C = E[kk^T]`; target value `v*` must be defined independently of a single neuron-column overwrite | equation test + target optimization + model edit success/locality test |
 | MEMIT | batch update across selected MLP layers, with calibration covariance and propagated target residuals | batch linear-solve test + multi-layer edit benchmark |
 | Task Arithmetic | task vector is `theta_ft - theta_base`; arithmetic is elementwise in a common parameterization | exact vector identity test |
 | TIES | trim low-magnitude deltas, elect sign, then merge only sign-consistent entries | deterministic merge test |
@@ -22,6 +22,20 @@ model-level behavioral tests.
 | Hidden-state distillation | teacher/student activations must be aligned with compatible tokenization/architecture and regression objective | hidden-state error + downstream evaluation |
 | Causal scrubbing | interventions must implement the stated causal graph/hypothesis and use an outcome metric, not a binary prediction flip alone | resampling/intervention suite |
 | Constitutional surgery | value direction must be measured from a defined preference/constitution dataset and the intervention evaluated for intended and collateral behavior | paired benchmark |
+
+## ROME target optimization status
+
+The research runtime now has an explicit target-vector optimization stage. It
+extracts the gated MLP activation consumed by `W_down`, then optimizes `v*` by
+actually imposing `W'k*=v` and evaluating the real NumPy forward pass. The current
+optimizer is deterministic SPSA with a target-token NLL, KL preservation term,
+and L2 proximity regularizer. This removes the previous token-embedding-copy
+heuristic, but SPSA is **not** the exact autograd optimization procedure from the
+original ROME implementation.
+
+The runtime therefore reports the variant as experimental and must not be marked
+paper-equivalent until the exact target optimization and a real-model benchmark
+pass the contract below.
 
 ## Hard rule
 
