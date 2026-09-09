@@ -13,11 +13,10 @@ paper-equivalence by itself.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 import numpy as np
 
-from .research_math import rome_rank_one_update
 from .forward_pass import NumpyLlamaForward
 
 
@@ -36,7 +35,7 @@ class RomeTargetOptimizationResult:
 def extract_mlp_key(forward: NumpyLlamaForward, token_ids: List[int], layer_idx: int) -> np.ndarray:
     """Return the actual gated MLP activation h at the final token position.
 
-    For Llama-style layers h = SiLU(W_gate x_ffn) * (W_up x_ffn).  The helper
+    For Llama-style layers h = SiLU(W_gate x_ffn) * (W_up x_ffn). The helper
     obtains x_ffn by executing the real target layer's attention path while
     zeroing W_down, so it does not confuse a gate row/column with the ROME key.
     """
@@ -45,19 +44,14 @@ def extract_mlp_key(forward: NumpyLlamaForward, token_ids: List[int], layer_idx:
     layer = forward.layers[layer_idx]
     if layer.ffn_gate is None or layer.ffn_up is None or layer.ffn_down is None:
         raise ValueError("ROME key extraction requires gated MLP tensors")
-
     original = layer.ffn_down
     try:
         layer.ffn_down = np.zeros_like(original, dtype=np.float32)
-        # The returned last hidden state is then exactly the post-attention
-        # residual at the target layer, before its MLP residual is added.
         attn_residual = forward.get_layer_hidden_state(token_ids, layer_idx)
     finally:
         layer.ffn_down = original
-
     if attn_residual is None:
         raise RuntimeError("Could not compute target-layer attention residual")
-
     ffn_input = forward._rms_norm(attn_residual, layer.ffn_norm) if layer.ffn_norm is not None else attn_residual
     gate = forward._silu(ffn_input @ layer.ffn_gate.T)
     up = ffn_input @ layer.ffn_up.T
@@ -87,21 +81,23 @@ def _objective(
     l2_weight: float,
     baseline_value: np.ndarray,
 ) -> Tuple[float, float]:
-    """Evaluate a candidate v by imposing W'k=v and running the real model."""
+    """Evaluate v by imposing the exact constraint W'k=v and running the model."""
     layer = forward.layers[layer_idx]
     w = np.asarray(layer.ffn_down, dtype=np.float32)
-    delta = rome_rank_one_update(w, key, candidate, key_covariance=np.outer(key, key))
+    key = np.asarray(key, dtype=np.float32).reshape(-1)
+    residual = np.asarray(candidate, dtype=np.float32) - (w @ key)
+    denom = float(key @ key)
+    if denom <= 1e-12:
+        raise ValueError("ROME key has near-zero norm")
+    delta = np.outer(residual, key) / denom
     layer.ffn_down = w + delta
     try:
         result = forward.forward_with_lens(token_ids)
         logits = result.final_logits
     finally:
         layer.ffn_down = w
-
     logp = _log_softmax(logits)
     base_logp = _log_softmax(base_logits)
-    # KL(base || candidate) keeps the optimization from destroying the
-    # original distribution while the target NLL supplies the edit objective.
     p_base = np.exp(base_logp)
     kl = float(np.sum(p_base * (base_logp - logp)))
     l2 = float(np.mean((candidate - baseline_value) ** 2))
@@ -133,18 +129,15 @@ def optimize_target_value(
         raise ValueError("iterations must be positive")
     if probe_scale <= 0 or step_size <= 0:
         raise ValueError("step_size and probe_scale must be positive")
-
     key = np.asarray(key, dtype=np.float32)
     layer = forward.layers[layer_idx]
     baseline_value = layer.ffn_down.astype(np.float32) @ key
     base = forward.forward_with_lens(token_ids)
     base_logits = base.final_logits.copy()
-
     initial_loss, initial_prob = _objective(
         forward, token_ids, layer_idx, key, baseline_value, target_id,
         base_logits, kl_weight, l2_weight, baseline_value,
     )
-
     rng = np.random.default_rng(seed)
     value = baseline_value.copy()
     for _ in range(iterations):
@@ -154,23 +147,16 @@ def optimize_target_value(
         loss_plus, _ = _objective(forward, token_ids, layer_idx, key, plus, target_id, base_logits, kl_weight, l2_weight, baseline_value)
         loss_minus, _ = _objective(forward, token_ids, layer_idx, key, minus, target_id, base_logits, kl_weight, l2_weight, baseline_value)
         grad = ((loss_plus - loss_minus) / (2.0 * probe_scale)) * direction
-        # Normalize the SPSA estimate so one noisy iteration cannot explode a
-        # high-dimensional value vector.
         grad_norm = float(np.linalg.norm(grad))
         if grad_norm > 1e-12:
             grad = grad / max(grad_norm, 1.0)
         value = value - step_size * grad.astype(np.float32)
-
     final_loss, final_prob = _objective(
         forward, token_ids, layer_idx, key, value, target_id,
         base_logits, kl_weight, l2_weight, baseline_value,
     )
     return RomeTargetOptimizationResult(
-        target_value=value.astype(np.float32),
-        initial_loss=initial_loss,
-        final_loss=final_loss,
-        initial_target_probability=initial_prob,
-        final_target_probability=final_prob,
-        iterations=iterations,
-        seed=seed,
+        target_value=value.astype(np.float32), initial_loss=initial_loss,
+        final_loss=final_loss, initial_target_probability=initial_prob,
+        final_target_probability=final_prob, iterations=iterations, seed=seed,
     )
