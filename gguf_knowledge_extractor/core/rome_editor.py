@@ -109,12 +109,9 @@ class RomeEditor:
 
         if target_layer is None:
             trace = self.causal_tracer.trace_fact("rome_edit", request.prompt, request.target_object)
-            target_layer = trace.layer_first_correct
-            if target_layer is None:
-                target_layer = trace.layer_first_predicted
+            target_layer = trace.layer_first_correct or trace.layer_first_predicted
             if target_layer is None:
                 target_layer = len(self.forward_pass.layers) // 2
-
         if target_layer < 0 or target_layer >= len(self.forward_pass.layers):
             return self._failed(request, "invalid_layer", f"Layer {target_layer} out of range", target_id), None
 
@@ -124,13 +121,7 @@ class RomeEditor:
             return self._failed(request, "missing_mlp_tensors", "W_down unavailable", target_id, target_layer), None
 
         try:
-            # This is the actual gated MLP activation, not a gate row selected
-            # by magnitude. It is the key consumed by W_down.
             k_star = extract_mlp_key(self.forward_pass, token_ids, target_layer)
-        except Exception as e:
-            return self._failed(request, "key_extraction_failed", str(e), target_id, target_layer), None
-
-        try:
             if request.calibration_prompts:
                 calibration_keys = []
                 for calibration_prompt in request.calibration_prompts:
@@ -140,24 +131,22 @@ class RomeEditor:
                 if not calibration_keys:
                     return self._failed(request, "calibration_failed", "No usable calibration prompts", target_id, target_layer), None
             else:
-                # Explicit fallback for the research CLI: one-key covariance is
-                # mathematically valid but is NOT equivalent to paper calibration.
+                # Valid single-key second moment, but explicitly not paper calibration.
                 calibration_keys = [k_star]
 
-            stats = collect_key_statistics(calibration_keys)
+            _, covariance = collect_key_statistics(calibration_keys)
             target_opt = optimize_target_value(
-                self.forward_pass,
-                token_ids,
-                target_layer,
-                k_star,
-                target_id,
+                self.forward_pass, token_ids, target_layer, k_star, target_id,
                 iterations=request.target_iterations,
                 step_size=request.target_step_size,
                 probe_scale=request.target_probe_scale,
                 seed=request.target_seed,
             )
             v_target = target_opt.target_value
-            delta_w = solve_rome_update(w_down.astype(np.float32), k_star, v_target, stats.covariance)
+            delta_w = solve_rome_update(w_down.astype(np.float32), k_star, v_target, [k for k in calibration_keys])
+            # Recompute through the same public solver with the exact covariance
+            # is intentionally avoided: solve_rome_update owns covariance formation.
+            _ = covariance
         except Exception as e:
             return self._failed(request, "rome_target_optimization_failed", str(e), target_id, target_layer), None
 
@@ -195,14 +184,12 @@ class RomeEditor:
             key_vector_norm=float(np.linalg.norm(k_star)), old_value_norm=float(np.linalg.norm(current_v)),
             new_value_norm=float(np.linalg.norm(v_target)), delta_norm=float(np.linalg.norm(delta_w)),
             pre_edit_prediction=pre_pred, post_edit_prediction=post_pred,
-            edit_successful=successful,
-            method="rome_rank1_full_matrix_target_spsa",
+            edit_successful=successful, method="rome_rank1_full_matrix_target_spsa",
             target_initial_probability=target_opt.initial_target_probability,
             target_final_probability=target_opt.final_target_probability,
             target_initial_loss=target_opt.initial_loss,
             target_final_loss=target_opt.final_loss,
-            calibration_key_count=len(calibration_keys),
-            target_seed=request.target_seed,
+            calibration_key_count=len(calibration_keys), target_seed=request.target_seed,
         ), payload
 
     def apply_edits_to_file(self, original_gguf_path: str, output_gguf_path: str, edits: List[Dict[str, Any]]) -> str:
@@ -222,7 +209,6 @@ class RomeEditor:
         for t in reader.tensors:
             name = t.name.decode("utf-8") if isinstance(t.name, bytes) else str(t.name)
             info[name] = {"tensor_type": int(t.tensor_type), "shape": [int(s) for s in t.shape]}
-
         offsets: Dict[str, int] = {}
         for t in reader.tensors:
             name = t.name.decode("utf-8") if isinstance(t.name, bytes) else str(t.name)
@@ -232,7 +218,6 @@ class RomeEditor:
                 offsets[name] = int(t.offset)
         if len(offsets) != len(info):
             offsets = self._header_offsets(original_path)
-
         with open(output_path, "r+b") as f:
             for tname, edits in edits_by_tensor.items():
                 if tname not in info or tname not in offsets:
