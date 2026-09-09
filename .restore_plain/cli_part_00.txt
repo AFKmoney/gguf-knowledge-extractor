@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""
+GGUF Knowledge Extractor — CLI
+
+Usage:
+  python cli.py extract --gguf model.gguf [options]
+  python cli.py inspect --gguf model.gguf        (metadata + weights only, no inference)
+  python cli.py packs                             (list available probe packs)
+  python cli.py backends                          (check inference backend availability)
+  python cli.py web                               (start the local web UI)
+
+Examples:
+  # Full extraction with default packs
+  python cli.py extract --gguf ./models/llama-7b.Q4_K_M.gguf --out ./out/
+
+  # Weights-only (no inference required)
+  python cli.py inspect --gguf ./models/model.gguf --out ./out/
+
+  # Specific packs only
+  python cli.py extract --gguf model.gguf --packs facts_geography,concepts_programming
+
+  # Use llama.cpp server
+  python cli.py extract --gguf model.gguf --prefer server --server-url http://127.0.0.1:8080
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+# Make package importable when run as a script
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from gguf_knowledge_extractor.core.extractor import KnowledgeExtractor
+from gguf_knowledge_extractor.core.inference.base import list_available_backends
+from gguf_knowledge_extractor.core.probes.base import list_default_packs
+from gguf_knowledge_extractor.core.exporters.json_exporter import export_json
+from gguf_knowledge_extractor.core.exporters.markdown_exporter import export_markdown
+from gguf_knowledge_extractor.core.exporters.graph_exporter import export_graphml, export_turtle
+from gguf_knowledge_extractor.core.exporters.sqlite_exporter import export_sqlite
+from gguf_knowledge_extractor.core.causal_tracer import CausalTracer
+from gguf_knowledge_extractor.core.rome_editor import RomeEditor, EditRequest
+from gguf_knowledge_extractor.core.fingerprint_compare import FingerprintComparator
+from gguf_knowledge_extractor.core.model_manager import ModelManager, DEFAULT_MODELS_DIR, format_bytes
+from gguf_knowledge_extractor.core.gguf_surgeon import GGUFSurgeon, surgery_session
+from gguf_knowledge_extractor.core.quant_surgery import QuantSurgeon
+from gguf_knowledge_extractor.core.model_merger import ModelMerger
+from gguf_knowledge_extractor.core.gguf_diff import GGUFDiffer
+from gguf_knowledge_extractor.core.activation_patcher import ActivationPatcher
+from gguf_knowledge_extractor.core.imatrix import ImatrixComputer
+from gguf_knowledge_extractor.core.quantizer import SmartQuantizer
+from gguf_knowledge_extractor.core.knowledge_transplant import KnowledgeTransplanter
+from gguf_knowledge_extractor.core.abliterator import Abliterator
+from gguf_knowledge_extractor.core.advanced_techniques import (
+    MemitEditor, MemitEdit, TaskArithmetic, RepresentationEngineer,
+    WandaPruner, SmoothQuantizer, ConceptEraser, DynamicSteerer,
+    CausalScrubber, ConstitutionalSurgeon
+)
+
+
+def cmd_extract(args):
+    print(f"[extract] GGUF: {args.gguf}")
+    packs = list_default_packs()
+    if args.packs and args.packs != "all":
+        names = {n.strip() for n in args.packs.split(",")}
+        packs = [p for p in packs if p.name in names]
+        if not packs:
+            print(f"[extract] ERROR: no packs matched '{args.packs}'")
+            sys.exit(1)
+    print(f"[extract] Probe packs: {', '.join(p.name for p in packs)} ({sum(len(p) for p in packs)} probes total)")
+    if args.attribution:
+        print(f"[extract] Attribution: ENABLED (top {args.attribution_top_k} neurons per layer)")
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def progress(msg, cur, total):
+        if total > 0:
+            pct = cur / total * 100
+            print(f"[extract] [{cur}/{total}] {pct:.0f}% — {msg}")
+        else:
+            print(f"[extract] {msg}")
+
+    extractor = KnowledgeExtractor(
+        gguf_path=args.gguf,
+        server_url=args.server_url,
+        n_ctx=args.n_ctx,
+        n_gpu_layers=args.n_gpu_layers,
+        prefer_backend=args.prefer,
+        progress_cb=progress,
+    )
+    report = extractor.extract(
+        packs=packs,
+        do_metadata=True,
+        do_weights=not args.no_weights,
+        do_probes=not args.no_probes,
+        do_attribution=args.attribution,
+        attribution_top_k=args.attribution_top_k,
+    )
+
+    base = Path(args.gguf).stem
+    json_path = export_json(report, out_dir / f"{base}_report.json")
+    md_path = export_markdown(report, out_dir / f"{base}_report.md")
+    graphml_path = export_graphml(report, out_dir / f"{base}_knowledge.graphml")
+    ttl_path = export_turtle(report, out_dir / f"{base}_knowledge.ttl")
+    db_path = export_sqlite(report, out_dir / f"{base}_knowledge.db")
+
+    print()
+    print(f"[extract] ✓ Done in {report.stats['total_elapsed_seconds']:.1f}s")
+    print(f"[extract] Backend used: {report.stats.get('backend_used')}")
+    print(f"[extract] Probes run: {report.stats['n_probes']}  |  passed: {report.stats['n_probes_passed']}")
+    if args.attribution and report.attribution:
+        fp = report.attribution.get("knowledge_fingerprint","")[:16]
+        n_layers = (report.attribution.get("stats",{}) or {}).get("n_layers_analyzed_mlp",0)
+        n_neurons = (report.attribution.get("stats",{}) or {}).get("n_global_top_neurons",0)
+        print(f"[extract] Knowledge fingerprint: {fp}...")
+        print(f"[extract] MLP layers analyzed: {n_layers}  |  top neurons extracted: {n_neurons}")
+    print(f"[extract] Outputs:")
+    print(f"           JSON     : {json_path}")
+    print(f"           Markdown : {md_path}")
+    print(f"           GraphML  : {graphml_path}")
+    print(f"           Turtle   : {ttl_path}")
+    print(f"           SQLite   : {db_path}")
+
+
+def cmd_inspect(args):
+    print(f"[inspect] GGUF: {args.gguf}")
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def progress(msg, cur, total):
+        print(f"[inspect] {msg}")
+
+    extractor = KnowledgeExtractor(
+        gguf_path=args.gguf,
+        prefer_backend="auto",
+        progress_cb=progress,
+    )
+    report = extractor.extract(packs=[], do_metadata=True, do_weights=True, do_probes=False)
+
+    base = Path(args.gguf).stem
+    json_path = export_json(report, out_dir / f"{base}_inspect.json")
+    md_path = export_markdown(report, out_dir / f"{base}_inspect.md")
+
+    print(f"[inspect] ✓ Done")
+    print(f"[inspect] Outputs:")
+    print(f"           JSON     : {json_path}")
+    print(f"           Markdown : {md_path}")
+
+
+def cmd_attribute(args):
+    """Weights + attribution only — no inference required."""
+    print(f"[attribute] GGUF: {args.gguf}")
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def progress(msg, cur, total):
+        if total > 0:
+            print(f"[attribute] [{cur}/{total}] {msg}")
+        else:
+            print(f"[attribute] {msg}")
+
+    extractor = KnowledgeExtractor(
+        gguf_path=args.gguf,
+        prefer_backend="auto",
+        progress_cb=progress,
+    )
+    report = extractor.extract(
+        packs=[],
+        do_metadata=True,
+        do_weights=True,
+        do_probes=False,
+        do_attribution=True,
+        attribution_top_k=args.top_k,
+    )
+
+    base = Path(args.gguf).stem
+    json_path = export_json(report, out_dir / f"{base}_attribution.json")
+    md_path = export_markdown(report, out_dir / f"{base}_attribution.md")
+    graphml_path = export_graphml(report, out_dir / f"{base}_attribution.graphml")
+    ttl_path = export_turtle(report, out_dir / f"{base}_attribution.ttl")
+    db_path = export_sqlite(report, out_dir / f"{base}_attribution.db")
+
+    print()
+    print(f"[attribute] ✓ Done in {report.stats['total_elapsed_seconds']:.1f}s")
+    if report.attribution:
+        fp = report.attribution.get("knowledge_fingerprint","")
+        n_layers = (report.attribution.get("stats",{}) or {}).get("n_layers_analyzed_mlp",0)
+        n_neurons = (report.attribution.get("stats",{}) or {}).get("n_global_top_neurons",0)
+        n_heads = (report.att
