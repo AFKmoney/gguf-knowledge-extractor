@@ -1,14 +1,13 @@
 """ROME-style rank-1 knowledge editing for GGUF models.
 
-This module deliberately distinguishes the mathematical ROME update from a
-single-column overwrite. The update is applied to the full W_down matrix:
+The runtime now separates three scientific stages:
+1. extract the actual MLP key k*;
+2. optimize an explicit target value v* against the real forward pass;
+3. solve and apply the full-matrix rank-1 ROME update.
 
-    ΔW = (v_target - W k*) k*^T / (k*^T k*)
-
-The target value is estimated from the requested token embedding and scaled
-against the current projection magnitude. This is still an approximation of
-full ROME because we do not have the paper's covariance statistics, but the
-actual rank-1 update is now mathematically correct.
+The target optimizer is currently SPSA-based and remains experimental; this
+module therefore does not claim paper-equivalence until the exact paper
+optimization and model-level validation contract pass.
 """
 from __future__ import annotations
 
@@ -16,7 +15,7 @@ import shutil
 import struct
 import time
 from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import gguf
@@ -24,6 +23,8 @@ import gguf
 from .forward_pass import NumpyLlamaForward
 from .mlp_analyzer import MLPAnalyzer
 from .causal_tracer import CausalTracer
+from .rome_reference import collect_key_statistics, solve_rome_update
+from .rome_target import extract_mlp_key, optimize_target_value
 
 
 @dataclass
@@ -32,6 +33,11 @@ class EditRequest:
     prompt: str
     target_object: str
     preserve_other_facts: bool = True
+    calibration_prompts: Optional[List[str]] = None
+    target_iterations: int = 24
+    target_step_size: float = 0.05
+    target_probe_scale: float = 0.01
+    target_seed: int = 0
 
 
 @dataclass
@@ -51,6 +57,12 @@ class EditResult:
     edit_successful: bool
     method: str
     error: Optional[str] = None
+    target_initial_probability: Optional[float] = None
+    target_final_probability: Optional[float] = None
+    target_initial_loss: Optional[float] = None
+    target_final_loss: Optional[float] = None
+    calibration_key_count: int = 0
+    target_seed: Optional[int] = None
 
 
 @dataclass
@@ -63,7 +75,7 @@ class EditReport:
 
 
 class RomeEditor:
-    """ROME-style rank-1 fact editor with full-matrix ΔW updates."""
+    """ROME-style rank-1 fact editor with explicit target optimization."""
 
     def __init__(self, reader: gguf.GGUFReader, fields: Dict[str, Any]):
         self.reader = reader
@@ -106,36 +118,51 @@ class RomeEditor:
         if target_layer < 0 or target_layer >= len(self.forward_pass.layers):
             return self._failed(request, "invalid_layer", f"Layer {target_layer} out of range", target_id), None
 
-        hidden = self.forward_pass.get_layer_hidden_state(token_ids, target_layer)
         layer = self.forward_pass.layers[target_layer]
-        key_source = layer.ffn_gate if layer.ffn_gate is not None else layer.ffn_up
         w_down = layer.ffn_down
-        if hidden is None or key_source is None or w_down is None:
-            return self._failed(request, "missing_mlp_tensors", "Required MLP tensors unavailable", target_id, target_layer), None
+        if w_down is None:
+            return self._failed(request, "missing_mlp_tensors", "W_down unavailable", target_id, target_layer), None
 
-        # k* is the MLP key for the requested subject context. We select the
-        # strongest unit only for diagnostics; the update itself is full rank-1.
-        activations = key_source @ hidden
-        neuron = int(np.argmax(activations))
-        k_star = np.asarray(key_source[neuron], dtype=np.float32)
-        k_norm_sq = float(np.dot(k_star, k_star))
-        if k_norm_sq < 1e-12:
-            return self._failed(request, "zero_key", "Subject key vector has near-zero norm", target_id, target_layer, neuron), None
+        try:
+            # This is the actual gated MLP activation, not a gate row selected
+            # by magnitude. It is the key consumed by W_down.
+            k_star = extract_mlp_key(self.forward_pass, token_ids, target_layer)
+        except Exception as e:
+            return self._failed(request, "key_extraction_failed", str(e), target_id, target_layer), None
 
-        # Desired MLP output direction. A token embedding is a useful local
-        # target direction, but not a complete ROME v* computation.
-        v_target = np.asarray(self.forward_pass.token_embd[target_id], dtype=np.float32).copy()
+        try:
+            if request.calibration_prompts:
+                calibration_keys = []
+                for calibration_prompt in request.calibration_prompts:
+                    ids = self.causal_tracer.tokenize(calibration_prompt)
+                    if ids:
+                        calibration_keys.append(extract_mlp_key(self.forward_pass, ids, target_layer))
+                if not calibration_keys:
+                    return self._failed(request, "calibration_failed", "No usable calibration prompts", target_id, target_layer), None
+            else:
+                # Explicit fallback for the research CLI: one-key covariance is
+                # mathematically valid but is NOT equivalent to paper calibration.
+                calibration_keys = [k_star]
+
+            stats = collect_key_statistics(calibration_keys)
+            target_opt = optimize_target_value(
+                self.forward_pass,
+                token_ids,
+                target_layer,
+                k_star,
+                target_id,
+                iterations=request.target_iterations,
+                step_size=request.target_step_size,
+                probe_scale=request.target_probe_scale,
+                seed=request.target_seed,
+            )
+            v_target = target_opt.target_value
+            delta_w = solve_rome_update(w_down.astype(np.float32), k_star, v_target, stats.covariance)
+        except Exception as e:
+            return self._failed(request, "rome_target_optimization_failed", str(e), target_id, target_layer), None
+
         current_v = w_down.astype(np.float32) @ k_star
-        target_norm = float(np.linalg.norm(v_target))
-        current_norm = float(np.linalg.norm(current_v))
-        if target_norm > 1e-8 and current_norm > 1e-8:
-            v_target *= current_norm / target_norm
-
-        residual = v_target - current_v
-        delta_w = np.outer(residual, k_star) / k_norm_sq
         edited_w = w_down.astype(np.float32) + delta_w
-
-        # Verify with the exact same matrix used by the forward pass.
         original = layer.ffn_down
         layer.ffn_down = edited_w
         try:
@@ -150,23 +177,32 @@ class RomeEditor:
 
         tensor_name = self._find_tensor_name(target_layer, ["ffn_down.weight", "mlp.down.weight", "mlp.down_proj.weight"])
         if tensor_name is None:
-            return self._failed(request, "tensor_name_not_found", "Could not find W_down tensor", target_id, target_layer, neuron), None
+            return self._failed(request, "tensor_name_not_found", "Could not find W_down tensor", target_id, target_layer), None
 
         payload = {
             "tensor_name": tensor_name,
             "delta_matrix": delta_w.astype(np.float32),
-            "column_index": neuron,
-            "old_value": w_down[:, neuron].copy(),
-            "new_value": edited_w[:, neuron].copy(),
+            "column_index": None,
+            "old_value": current_v.copy(),
+            "new_value": v_target.copy(),
+            "rome_target_optimization": asdict(target_opt),
+            "calibration_key_count": len(calibration_keys),
         }
 
         return EditResult(
             subject=request.subject, prompt=request.prompt, target_object=request.target_object,
-            target_token_id=target_id, edited_layer=target_layer, edited_neuron=neuron,
+            target_token_id=target_id, edited_layer=target_layer, edited_neuron=None,
             key_vector_norm=float(np.linalg.norm(k_star)), old_value_norm=float(np.linalg.norm(current_v)),
             new_value_norm=float(np.linalg.norm(v_target)), delta_norm=float(np.linalg.norm(delta_w)),
             pre_edit_prediction=pre_pred, post_edit_prediction=post_pred,
-            edit_successful=successful, method="rome_rank1_full_matrix",
+            edit_successful=successful,
+            method="rome_rank1_full_matrix_target_spsa",
+            target_initial_probability=target_opt.initial_target_probability,
+            target_final_probability=target_opt.final_target_probability,
+            target_initial_loss=target_opt.initial_loss,
+            target_final_loss=target_opt.final_loss,
+            calibration_key_count=len(calibration_keys),
+            target_seed=request.target_seed,
         ), payload
 
     def apply_edits_to_file(self, original_gguf_path: str, output_gguf_path: str, edits: List[Dict[str, Any]]) -> str:
@@ -187,9 +223,6 @@ class RomeEditor:
             name = t.name.decode("utf-8") if isinstance(t.name, bytes) else str(t.name)
             info[name] = {"tensor_type": int(t.tensor_type), "shape": [int(s) for s in t.shape]}
 
-        # Use GGUFReader's tensor metadata for data offsets when available;
-        # fall back to the standard header walk for compatibility with older
-        # python-gguf releases.
         offsets: Dict[str, int] = {}
         for t in reader.tensors:
             name = t.name.decode("utf-8") if isinstance(t.name, bytes) else str(t.name)
@@ -197,7 +230,6 @@ class RomeEditor:
                 offsets[name] = int(t.data_offset)
             elif hasattr(t, "offset"):
                 offsets[name] = int(t.offset)
-
         if len(offsets) != len(info):
             offsets = self._header_offsets(original_path)
 
@@ -211,25 +243,22 @@ class RomeEditor:
                     raise ValueError(f"ROME full-matrix patch requires F32/F16/BF16, got {ttype.name}")
                 if len(shape) != 2:
                     raise ValueError(f"ROME target is not a matrix: {tname}")
-
                 rows, cols = shape
-                matrix = np.empty((rows, cols), dtype=np.float32)
+                item_bytes = 4 if ttype == gguf.GGMLQuantizationType.F32 else 2
                 f.seek(offsets[tname])
-                raw = f.read(rows * cols * (4 if ttype == gguf.GGMLQuantizationType.F32 else 2))
+                raw = f.read(rows * cols * item_bytes)
                 if ttype == gguf.GGMLQuantizationType.F32:
-                    matrix[:] = np.frombuffer(raw, dtype=np.float32).reshape(shape)
+                    matrix = np.frombuffer(raw, dtype=np.float32).reshape(shape).copy()
                 elif ttype == gguf.GGMLQuantizationType.F16:
-                    matrix[:] = np.frombuffer(raw, dtype=np.float16).astype(np.float32).reshape(shape)
+                    matrix = np.frombuffer(raw, dtype=np.float16).astype(np.float32).reshape(shape)
                 else:
                     u = np.frombuffer(raw, dtype=np.uint16).astype(np.uint32) << 16
-                    matrix[:] = u.view(np.float32).reshape(shape)
-
+                    matrix = u.view(np.float32).reshape(shape).copy()
                 for e in edits:
                     delta = np.asarray(e.get("delta_matrix"), dtype=np.float32)
                     if delta.shape != matrix.shape:
                         raise ValueError(f"Delta shape {delta.shape} != tensor shape {matrix.shape}")
                     matrix += delta
-
                 f.seek(offsets[tname])
                 if ttype == gguf.GGMLQuantizationType.F32:
                     f.write(matrix.astype(np.float32).tobytes())
@@ -241,7 +270,6 @@ class RomeEditor:
         return output_path
 
     def _header_offsets(self, path: str) -> Dict[str, int]:
-        """Read GGUF tensor offsets without depending on private gguf APIs."""
         with open(path, "rb") as f:
             magic, version = struct.unpack("<II", f.read(8))
             if magic != 0x46554747:
