@@ -30,14 +30,19 @@ def test_rome_hits_constraint_and_is_rank_one():
     assert np.linalg.matrix_rank(delta, tol=1e-5) <= 1
 
 
-def test_memit_hits_all_batch_constraints():
+def test_memit_satisfies_regularized_normal_equation():
     rng = np.random.default_rng(2)
     W = rng.normal(size=(6, 4)).astype(np.float32)
     K = rng.normal(size=(4, 3)).astype(np.float32)
     V = rng.normal(size=(6, 3)).astype(np.float32)
     C = np.eye(4, dtype=np.float32) * 0.1
     delta = memit_layer_update(W, K, V, C)
-    assert np.allclose((W + delta) @ K, V, atol=1e-4)
+    A = C + K @ K.T
+    residual = (V - (W + delta) @ K) @ K.T
+    # The regularized optimum obeys Delta A = (V-WK)K^T.
+    assert np.allclose(delta @ A, residual + delta @ A, atol=1e-4)
+    expected = (V - W @ K) @ K.T
+    assert np.allclose(delta @ A, expected, atol=1e-4)
 
 
 def test_task_arithmetic_is_exact_vector_addition():
