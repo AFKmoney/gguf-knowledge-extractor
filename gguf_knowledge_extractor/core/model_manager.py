@@ -29,7 +29,7 @@ import httpx
 # Default download location (can be overridden via env var or constructor)
 DEFAULT_MODELS_DIR = Path(os.environ.get(
     "GGUF_MODELS_DIR",
-    "/home/z/my-project/models",
+    "./models",
 ))
 
 HF_API_BASE = "https://huggingface.co/api"
