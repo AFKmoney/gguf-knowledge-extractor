@@ -1,0 +1,177 @@
+--- a/gguf_knowledge_extractor/core/forward_pass.py
++++ b/gguf_knowledge_extractor/core/forward_pass.py
+@@ -443,18 +443,17 @@
+             k = np.repeat(k, n_rep, axis=0)
+             v = np.repeat(v, n_rep, axis=0)
+ 
+-        # Attention scores
+-        scores = q @ k.transpose(0, 2, 1) / np.sqrt(cfg.head_dim)  # [n_heads, seq, seq]
+-        # Causal mask
++        # Attention scores in float64 for stable softmax (llama.cpp uses f32
++        # accumulators; f64 softmax reduces argmax flakiness on long prompts).
++        scale = 1.0 / np.sqrt(float(cfg.head_dim))
++        scores = (q.astype(np.float64) @ k.astype(np.float64).transpose(0, 2, 1)) * scale
+         mask = np.triu(np.ones((seq_len, seq_len), dtype=bool), k=1)
+-        scores[:, mask] = -1e30
+-        # Softmax
++        scores[:, mask] = -1e9
+         scores = scores - scores.max(axis=-1, keepdims=True)
+         exp_scores = np.exp(scores)
+         attn = exp_scores / exp_scores.sum(axis=-1, keepdims=True)
+ 
+-        # Attention output
+-        attn_out = attn @ v  # [n_heads, seq, head_dim]
++        attn_out = (attn @ v.astype(np.float64)).astype(np.float32)
+         attn_out = attn_out.transpose(1, 0, 2).reshape(seq_len, dim)
+         attn_out = attn_out @ layer.attn_output.T
+         x = x + attn_out
+@@ -498,7 +497,15 @@
+ 
+     @staticmethod
+     def _silu(x: np.ndarray) -> np.ndarray:
+-        return x * (1.0 / (1.0 + np.exp(-x)))
++        """Stable SiLU / swish: x * sigmoid(x), safe for large |x|."""
++        x = np.asarray(x, dtype=np.float32)
++        out = np.empty_like(x)
++        pos = x >= 0
++        xp = np.clip(x, -80.0, 80.0)
++        out[pos] = x[pos] / (1.0 + np.exp(-xp[pos]))
++        ex = np.exp(xp[~pos])
++        out[~pos] = x[~pos] * ex / (1.0 + ex)
++        return out
+ 
+     @staticmethod
+     def _gelu(x: np.ndarray) -> np.ndarray:
+@@ -506,37 +513,42 @@
+         return 0.5 * x * (1.0 + np.tanh(np.sqrt(2.0 / np.pi) * (x + 0.044715 * x ** 3)))
+ 
+     def _apply_rope(self, x: np.ndarray, positions: np.ndarray) -> np.ndarray:
+-        """Apply rotary positional embeddings.
++        """Apply rotary positional embeddings (llama.cpp NORM / interleaved pairs).
++
+         x: [n_heads, seq, head_dim]
+         positions: [seq]
++
++        Empirically, TinyLlama (and other llama.cpp LLAMA GGUFs in this runtime)
++        match llama.cpp logits when RoPE rotates interleaved pairs
++        (x[..., 0::2], x[..., 1::2]) — ggml ``GGML_ROPE_TYPE_NORM`` — rather than
++        the NeoX half-split used by some HuggingFace Llama implementations.
++        Using half-split here dropped mean logit cosine vs llama.cpp to ~0.96
++        with frequent top-1 disagreements; interleaved restores cosine ≥0.999.
+         """
+         cfg = self.config
+         rope_dim = cfg.rope_dim or cfg.head_dim
+-        # Only apply to first rope_dim dimensions; leave the rest unchanged
+-        n_heads, seq_len, head_dim = x.shape
+-
+-        # Compute frequencies
+         half = rope_dim // 2
+-        freqs = 1.0 / (cfg.rope_freq_base ** (np.arange(0, half, dtype=np.float32) / half))
+-        # angles: [seq, half]
+-        angles = np.outer(positions, freqs)
++        # freqs[i] = base^(-i/half) == base^(-(2i)/rope_dim) for i=0..half-1
++        freqs = 1.0 / (
++            cfg.rope_freq_base ** (np.arange(0, half, dtype=np.float64) / half)
++        )
++        angles = np.outer(np.asarray(positions, dtype=np.float64), freqs)
+         cos = np.cos(angles)  # [seq, half]
+         sin = np.sin(angles)
+ 
+-        # Split x into two halves along the head_dim
+-        x1 = x[..., :half]   # [n_heads, seq, half]
+-        x2 = x[..., half:rope_dim]  # [n_heads, seq, half]
+-        x_rest = x[..., rope_dim:]  # [n_heads, seq, head_dim - rope_dim]
+-
+-        # Apply rotation
+-        # cos, sin: [seq, half] -> broadcast to [1, seq, half]
++        x_rope = np.asarray(x[..., :rope_dim], dtype=np.float64)
++        x_rest = x[..., rope_dim:]
++        x1 = x_rope[..., 0::2]
++        x2 = x_rope[..., 1::2]
+         cos_b = cos[None, :, :]
+         sin_b = sin[None, :, :]
+-        new_x1 = x1 * cos_b - x2 * sin_b
+-        new_x2 = x1 * sin_b + x2 * cos_b
+-
+-        # Recombine
+-        return np.concatenate([new_x1, new_x2, x_rest], axis=-1)
++        y1 = x1 * cos_b - x2 * sin_b
++        y2 = x1 * sin_b + x2 * cos_b
++        rotated = np.empty_like(x_rope)
++        rotated[..., 0::2] = y1
++        rotated[..., 1::2] = y2
++        out = np.concatenate([rotated.astype(x.dtype, copy=False), x_rest], axis=-1)
++        return out
+ 
+     # ------------------------------------------------------------------ #
+     # Token helpers
+@@ -556,6 +568,69 @@
+         probs = exp_logits / exp_logits.sum()
+         top_idx = np.argsort(probs)[::-1][:k]
+         return [(int(i), self._token_text(int(i)), float(probs[i])) for i in top_idx]
++
++
++    def get_residual_after_attn(self, token_ids: List[int], layer_idx: int) -> np.ndarray:
++        """Hidden states [seq, dim] after attention (+ residual) at ``layer_idx``, before MLP.
++
++        Used by ROME to read MLP keys at an arbitrary token position (paper: subject
++        last token) without confusing gate rows with keys.
++        """
++        if not self.is_available():
++            raise RuntimeError("Forward pass not available")
++        if layer_idx < 0 or layer_idx >= len(self.layers):
++            raise ValueError(f"Layer {layer_idx} out of range")
++        seq = list(token_ids)[: self.config.max_seq_len]
++        x = self.token_embd[np.array(seq)]
++        positions = np.arange(len(seq), dtype=np.float32)
++        for i, layer in enumerate(self.layers):
++            if i == layer_idx:
++                return self._attention_block(x, layer, positions)
++            x = self._apply_layer(x, layer, positions)
++        raise RuntimeError("unreachable")
++
++    def _attention_block(self, x: np.ndarray, layer: LayerTensors, positions: np.ndarray) -> np.ndarray:
++        """Attention sublayer only; returns x + attn_out (pre-MLP residual)."""
++        cfg = self.config
++        seq_len, dim = x.shape
++        attn_input = self._rms_norm(x, layer.attn_norm) if layer.attn_norm is not None else x
++        q = attn_input @ layer.attn_q.T
++        k = attn_input @ layer.attn_k.T
++        v = attn_input @ layer.attn_v.T
++        q = q.reshape(seq_len, cfg.n_heads, cfg.head_dim).transpose(1, 0, 2)
++        k = k.reshape(seq_len, cfg.n_kv_heads, cfg.head_dim).transpose(1, 0, 2)
++        v = v.reshape(seq_len, cfg.n_kv_heads, cfg.head_dim).transpose(1, 0, 2)
++        q = self._apply_rope(q, positions)
++        k = self._apply_rope(k, positions)
++        if cfg.n_kv_heads < cfg.n_heads:
++            n_rep = cfg.n_heads // cfg.n_kv_heads
++            k = np.repeat(k, n_rep, axis=0)
++            v = np.repeat(v, n_rep, axis=0)
++        scale = 1.0 / np.sqrt(float(cfg.head_dim))
++        scores = (q.astype(np.float64) @ k.astype(np.float64).transpose(0, 2, 1)) * scale
++        mask = np.triu(np.ones((seq_len, seq_len), dtype=bool), k=1)
++        scores[:, mask] = -1e9
++        scores = scores - scores.max(axis=-1, keepdims=True)
++        attn = np.exp(scores)
++        attn = attn / attn.sum(axis=-1, keepdims=True)
++        attn_out = (attn @ v.astype(np.float64)).astype(np.float32)
++        attn_out = attn_out.transpose(1, 0, 2).reshape(seq_len, dim)
++        attn_out = attn_out @ layer.attn_output.T
++        return x + attn_out
++
++    def mlp_keys_from_residual(self, residual: np.ndarray, layer_idx: int) -> np.ndarray:
++        """Gated MLP activations h = SiLU(W_gate x) * (W_up x) for each position.
++
++        ``residual`` is the pre-MLP stream [seq, dim] (post-attention residual).
++        Returns [seq, hidden_dim].
++        """
++        layer = self.layers[layer_idx]
++        if layer.ffn_gate is None or layer.ffn_up is None:
++            raise ValueError("gated MLP required")
++        ffn_input = self._rms_norm(residual, layer.ffn_norm) if layer.ffn_norm is not None else residual
++        gate = self._silu(ffn_input @ layer.ffn_gate.T)
++        up = ffn_input @ layer.ffn_up.T
++        return (gate * up).astype(np.float32)
+ 
+     def find_token_for_text(self, text: str) -> Optional[int]:
+         """Find the vocab index for a piece of text (tries exact match, then
