@@ -1,0 +1,40 @@
+--strength", type=float, default=1.0, help="0=blend, 1=full overwrite")
+    ptp.add_argument("--out", default="./download")
+    ptp.set_defaults(func=cmd_transplant)
+
+    # v8: abliterate
+    pab = sub.add_parser("abliterate", help="v8: Remove refusal behavior — create uncensored/abliterated model without retraining")
+    pab.add_argument("--gguf", required=True)
+    pab.add_argument("--strength", type=float, default=1.0, help="0=no change, 1=full abliteration (default: 1.0)")
+    pab.add_argument("--out", default="./download")
+    pab.set_defaults(func=cmd_abliterate)
+
+    # v9: advanced techniques
+    padv = sub.add_parser("advanced", help="v9: 10 advanced techniques (memit, task_arith, repe, wanda, smoothquant, erase, steer, distill, scrub, constitutional)")
+    padv.add_argument("technique", choices=["memit", "task_arith", "repe", "wanda", "smoothquant", "erase", "steer", "distill", "scrub", "constitutional"])
+    padv.add_argument("--gguf", help="Source GGUF")
+    padv.add_argument("--base", help="Base model (for task_arith)")
+    padv.add_argument("--finetuned", help="Fine-tuned model (for task_arith)")
+    padv.add_argument("--teacher", help="Teacher model (for distill)")
+    padv.add_argument("--edits", help="JSON list of edits (for memit)")
+    padv.add_argument("--operation", help="add/subtract/combine (for task_arith)")
+    padv.add_argument("--concept", help="Concept name (for repe)")
+    padv.add_argument("--positive", help="Positive prompts, comma-separated (for repe)")
+    padv.add_argument("--negative", help="Negative prompts, comma-separated (for repe)")
+    padv.add_argument("--amplification", type=float, help="Amplification factor (for repe)")
+    padv.add_argument("--sparsity", type=float, help="Target sparsity 0-1 (for wanda)")
+    padv.add_argument("--alpha", type=float, help="Alpha factor (for smoothquant, task_arith)")
+    padv.add_argument("--strength", type=float, help="Strength factor (for erase, steer)")
+    padv.add_argument("--layer", type=int, help="Target layer")
+    padv.add_argument("--target", help="Target prompt (for scrub)")
+    padv.add_argument("--control", help="Control prompt (for scrub)")
+    padv.add_argument("--values", help="JSON dict of value adjustments (for constitutional)")
+    padv.add_argument("--out", default="./download")
+    padv.set_defaults(func=cmd_advanced)
+
+    args = p.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
