@@ -1,1 +1,1 @@
-file:///tmp/rome_content_only.txt
+PLACEHOLDER_REPLACE_WITH_FILE
