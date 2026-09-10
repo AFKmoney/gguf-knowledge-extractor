@@ -68,7 +68,7 @@ def rank_one_constraint_error(
     key: np.ndarray,
     target: np.ndarray,
 ) -> float:
-    """Return ||(W+\u0394)k-target||\u2082 for the ROME constraint."""
+    """Return ||(W+Δ)k-target||₂ for the ROME constraint."""
     W = np.asarray(W_before, dtype=np.float32)
     D = np.asarray(delta, dtype=np.float32)
     k = np.asarray(key, dtype=np.float32).reshape(-1)
