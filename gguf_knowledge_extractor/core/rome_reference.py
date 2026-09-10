@@ -45,7 +45,7 @@ def solve_rome_update(
     subject_key: np.ndarray,
     target_value: np.ndarray,
     calibration_keys: Iterable[np.ndarray],
-    ridge: float = 0.0,
+    ridge: float = 0.01,
 ) -> np.ndarray:
     """Solve the ROME rank-one update from calibration activations.
 
@@ -68,9 +68,18 @@ def rank_one_constraint_error(
     key: np.ndarray,
     target: np.ndarray,
 ) -> float:
-    """Return ||(W+Δ)k-target||₂ for the ROME constraint."""
+    """Return ||(W+\u0394)k-target||\u2082 for the ROME constraint."""
     W = np.asarray(W_before, dtype=np.float32)
     D = np.asarray(delta, dtype=np.float32)
     k = np.asarray(key, dtype=np.float32).reshape(-1)
     v = np.asarray(target, dtype=np.float32).reshape(-1)
     return float(np.linalg.norm((W + D) @ k - v))
+
+
+def covariance_condition_number(C: np.ndarray, ridge: float = 0.0) -> float:
+    """Return cond(C + ridge I) for diagnostics (finite with ridge > 0)."""
+    C = np.asarray(C, dtype=np.float64)
+    d = C.shape[0]
+    A = C + float(ridge) * np.eye(d)
+    s = np.linalg.svd(A, compute_uv=False)
+    return float(s[0] / max(s[-1], 1e-30))
